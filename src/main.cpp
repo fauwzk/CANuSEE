@@ -56,6 +56,17 @@ float batteryVoltage = 0.0;
 float fuelLevel = 0.0;
 float oilTemp = 0.0;
 
+void restart_ESP()
+{
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_24);
+  display.drawString(64, 25, "REBOOTING");
+  display.display();
+  delay(1000);
+  ESP.restart();
+}
+
 void draw_ScreenNumber(uint8_t index)
 {
   display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -187,8 +198,8 @@ void setup()
     draw_BotomText("BT INIT FAIL");
     display.invertDisplay();
     display.display();
-    while (1)
-      ;
+    delay(1000);
+    restart_ESP();
   }
 
   SerialBT.setPin(ELM327_BT_PIN);
@@ -197,8 +208,8 @@ void setup()
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
     displayError("BT Conn FAIL");
-    while (1)
-      ;
+    delay(1000);
+    restart_ESP();
   }
   draw_BotomText("BT Initialized");
   display.display();
@@ -206,8 +217,8 @@ void setup()
   if (!myELM327.begin(SerialBT, true, 2000))
   {
     displayError("ELM327 INIT FAIL");
-    while (true)
-      ;
+    delay(1000);
+    restart_ESP();
   }
   draw_BotomText("ELM327 Connected");
   display.display();
