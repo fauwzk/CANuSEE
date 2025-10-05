@@ -42,7 +42,7 @@ void displayError(const String &msg);
 #define ELM327_BT_PIN "1234"
 #define ELM327_BT_NAME "OBDII" // Your ELM327 Bluetooth device name
 
-uint8_t address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
+uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 bool connected;
 
 #define BT_DISCOVER_TIME 500000
@@ -74,7 +74,7 @@ void setup()
   SerialBT.setPin(ELM327_BT_PIN);
   delay(2000); // wait for connection
   // Connect to the paired device by MAC address
-  if (!SerialBT.connect(address, sec_mask, role))
+  if (!SerialBT.connect(elm_address, sec_mask, role))
   {
     displayError("BT CONNECT FAIL");
     while (1)
