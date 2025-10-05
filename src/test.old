@@ -1,0 +1,213 @@
+#include <Wire.h>
+#include <BluetoothSerial.h>
+#include <ELMduino.h>
+#include <SSD1306Wire.h>
+
+// ==== OLED ====
+SSD1306Wire display(0x3C, 21, 22); // SDA=21, SCL=22
+
+// ==== ELM327 Classic Bluetooth ====
+BluetoothSerial SerialBT;
+ELM327 myELM327;
+
+// ==== Button ====
+#define BUTTON_PIN 32
+
+// ==== Data ====
+float boostPressure = 0.0;
+float coolantTemp = 0.0;
+
+// ==== Gauge setup ====
+const int centerX = 64;
+const int centerY = 55;
+const int radius = 28;
+const int minAngle = -120;
+const int maxAngle = 120;
+
+// ==== Screen control ====
+uint8_t screenIndex = 0;
+unsigned long lastSwitch = 0;
+const unsigned long switchInterval = 5000; // ms
+
+// ==== Debounce ====
+unsigned long lastButtonPress = 0;
+const unsigned long debounceDelay = 300;
+
+// ==== Function prototypes ====
+void draw_InfoText(String title, float value, String unit, float minVal, float maxVal);
+void fadeTransition(uint8_t nextScreen);
+void displayError(const String &msg);
+
+// Replace with your adapter's PIN code (usually "1234" or "0000")
+#define ELM327_BT_PIN "1234"
+#define ELM327_BT_NAME "OBDII" // Your ELM327 Bluetooth device name
+
+uint8_t address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
+bool connected;
+
+#define BT_DISCOVER_TIME 500000
+esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC_AUTHENTICATE to request pincode confirmation
+esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
+
+void setup()
+{
+  Serial.begin(38400);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // ==== OLED init ====
+  display.init();
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(64, 25, "Connecting...");
+  display.display();
+
+  // ==== Connect to Classic Bluetooth ELM327 ====
+  if (!SerialBT.begin("elmFauwzk", true))
+  { // true = master mode
+    displayError("BT FAIL");
+    while (1)
+      ;
+  }
+  displayError("BT started");
+
+  SerialBT.setPin(ELM327_BT_PIN);
+  delay(2000); // wait for connection
+  // Connect to the paired device by MAC address
+  if (!SerialBT.connect(address, sec_mask, role))
+  {
+    displayError("BT CONNECT FAIL");
+    while (1)
+      ;
+  }
+
+  displayError("BT CONNECTED");
+
+  if (!myELM327.begin(SerialBT, true, 2000))
+  {
+    displayError("ELM327 FAIL");
+    while (true)
+      ;
+  }
+
+  display.clear();
+  display.drawString(64, 25, "Connected!");
+  display.display();
+  delay(1000);
+}
+
+void loop()
+{
+  // ==== Read OBD data ====
+  float tmpBoost = myELM327.manifoldPressure();
+  float tmpCoolant = myELM327.engineCoolantTemp();
+
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    boostPressure = tmpBoost - 100.0; // convert absolute → relative
+    coolantTemp = tmpCoolant;
+  }
+
+  // Clamp
+  boostPressure = constrain(boostPressure, 0, 250);
+  coolantTemp = constrain(coolantTemp, -40, 150);
+
+  // ==== Handle switching ====
+  bool timeToSwitch = millis() - lastSwitch > switchInterval;
+
+  if (digitalRead(BUTTON_PIN) == LOW && millis() - lastButtonPress > debounceDelay)
+  {
+    lastButtonPress = millis();
+    timeToSwitch = true;
+  }
+
+  if (timeToSwitch)
+  {
+    lastSwitch = millis();
+    uint8_t nextScreen = (screenIndex + 1) % 2; // Only two gauges
+    fadeTransition(nextScreen);
+    screenIndex = nextScreen;
+  }
+
+  // ==== Draw current gauge ====
+  display.clear();
+  if (screenIndex == 0)
+    draw_InfoText("BOOST", boostPressure, "kPa", 0, 250);
+  else
+    draw_InfoText("COOLANT", coolantTemp, "°C", -40, 150);
+
+  delay(250);
+}
+
+// ==== Draw semicircular gauge ====
+void draw_InfoText(String title, float value, String unit, float minVal, float maxVal)
+{
+  // Draw arc
+  for (int a = minAngle; a <= maxAngle; a += 10)
+  {
+    int x1 = centerX + radius * cos(radians(a));
+    int y1 = centerY + radius * sin(radians(a));
+    display.setPixel(x1, y1);
+  }
+
+  // Tick marks
+  for (float i = minVal; i <= maxVal; i += (maxVal - minVal) / 4)
+  {
+    float tickAngle = map(i, minVal, maxVal, minAngle, maxAngle);
+    int tx1 = centerX + (radius - 2) * cos(radians(tickAngle));
+    int ty1 = centerY + (radius - 2) * sin(radians(tickAngle));
+    int tx2 = centerX + (radius - 6) * cos(radians(tickAngle));
+    int ty2 = centerY + (radius - 6) * sin(radians(tickAngle));
+    display.drawLine(tx1, ty1, tx2, ty2);
+  }
+
+  // Needle
+  float angle = map(value, minVal, maxVal, minAngle, maxAngle);
+  int x2 = centerX + (radius - 5) * cos(radians(angle));
+  int y2 = centerY + (radius - 5) * sin(radians(angle));
+  display.drawLine(centerX, centerY, x2, y2);
+  display.fillCircle(centerX, centerY, 2);
+
+  // Labels
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(centerX, 0, title);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(centerX, 20, String(value, 0) + " " + unit);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(64, 52, "< auto / btn >");
+  display.display();
+}
+
+// ==== Fade transition ====
+void fadeTransition(uint8_t nextScreen)
+{
+  const int steps = 10;
+  for (int i = 0; i < steps; i++)
+  {
+    display.setBrightness(255 - (i * 25));
+    delay(20);
+  }
+
+  display.clear();
+  if (nextScreen == 0)
+    draw_InfoText("BOOST", boostPressure, "kPa", 0, 250);
+  else
+    draw_InfoText("COOLANT", coolantTemp, "°C", -40, 150);
+
+  for (int i = 0; i < steps; i++)
+  {
+    display.setBrightness(i * 25);
+    delay(20);
+  }
+}
+
+// ==== Display error ====
+void displayError(const String &msg)
+{
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(64, 25, msg);
+  display.display();
+}
