@@ -24,7 +24,7 @@ const int minAngle = -120;
 const int maxAngle = 120;
 
 // ==== Screen control ====
-const int screenNumbers = 8;
+const int screenNumbers = 6;
 uint8_t screenIndex = 0;
 unsigned long lastSwitch = 0;
 
@@ -46,9 +46,6 @@ float coolant_temp = 0.0;
 float intake_temp = 0.0;
 float engine_load = 0.0;
 float battery_voltage = 0.0;
-float runtime_engine = 0.0;
-float fuel_level = 0.0;
-float fuel_rail_pressure = 0.0;
 float oil_temp = 0.0;
 
 float boostPressure = 0.0;
@@ -56,16 +53,14 @@ float intakeTemp = 0.0;
 float engineLoad = 0.0;
 float coolantTemp = 0.0;
 float batteryVoltage = 0.0;
-float engineRuntime = 0.0;
 float fuelLevel = 0.0;
-float fuelRailPressure = 0.0;
 float oilTemp = 0.0;
 
 void draw_ScreenNumber(uint8_t index)
 {
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 0, "Screen " + String(index + 1) + "/" + String(screenNumbers));
+  display.drawString(0, 52, "Screen " + String(index + 1) + "/" + String(screenNumbers));
 }
 // ==== Draw bottom text ====
 void draw_BotomText(String text)
@@ -133,33 +128,6 @@ void draw_GaugeScreen(uint8_t index)
   }
   else if (index == 4)
   {
-    runtime_engine = myELM327.runTime();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      engineRuntime = runtime_engine;
-    }
-    draw_InfoText("Temps Moteur", engineRuntime / 60, "min");
-  }
-  else if (index == 5)
-  {
-    fuel_level = myELM327.fuelLevel();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      fuelLevel = fuel_level;
-    }
-    draw_InfoText("Niveau Carbu", fuelLevel, "%");
-  }
-  else if (index == 6)
-  {
-    fuel_rail_pressure = myELM327.fuelRailPressure();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      fuelRailPressure = fuel_rail_pressure;
-    }
-    draw_InfoText("Press. Rampe", fuelRailPressure, "kPa");
-  }
-  else if (index == 7)
-  {
     oil_temp = myELM327.oilTemp(); // Placeholder, replace with actual oil temp PID if available
     if (myELM327.nb_rx_state == ELM_SUCCESS)
     {
@@ -167,7 +135,7 @@ void draw_GaugeScreen(uint8_t index)
     }
     draw_InfoText("Temp Huile", oilTemp, "°C");
   }
-  else
+  else if (index == 5)
   {
     coolant_temp = myELM327.engineCoolantTemp();
     if (myELM327.nb_rx_state == ELM_SUCCESS)
@@ -175,6 +143,10 @@ void draw_GaugeScreen(uint8_t index)
       coolantTemp = coolant_temp;
     }
     draw_InfoText("Temp LdR", coolantTemp, "°C");
+  }
+  else
+  {
+    draw_InfoText("No Data", 0, "");
   }
 }
 
