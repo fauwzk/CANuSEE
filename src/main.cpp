@@ -196,7 +196,7 @@ void draw_GaugeScreen(uint8_t index)
 }
 
 // ==== Display error ====
-void displayError(const String &msg)
+void displayError(String msg)
 {
   display.clear();
   display.invertDisplay();
@@ -205,6 +205,25 @@ void displayError(const String &msg)
   display.drawString(64, 25, "ERROR!");
   draw_BotomText(msg);
   display.display();
+}
+
+void fadeTransition(uint8_t nextScreen)
+{
+  const int steps = 10;
+  for (int i = 0; i < steps; i++)
+  {
+    display.setBrightness(255 - (i * 25));
+    delay(20);
+  }
+  display.displayOff();
+  display.clear();
+  draw_GaugeScreen(nextScreen);
+  display.displayOn();
+  for (int i = 0; i < steps; i++)
+  {
+    display.setBrightness(i * 25);
+    delay(20);
+  }
 }
 
 void setup()
@@ -283,25 +302,6 @@ void setup()
   display.display();
   delay(750);
   display.normalDisplay();
-}
-
-void fadeTransition(uint8_t nextScreen)
-{
-  const int steps = 10;
-  for (int i = 0; i < steps; i++)
-  {
-    display.setBrightness(255 - (i * 25));
-    delay(20);
-  }
-  display.displayOff();
-  display.clear();
-  draw_GaugeScreen(nextScreen);
-  display.displayOn();
-  for (int i = 0; i < steps; i++)
-  {
-    display.setBrightness(i * 25);
-    delay(20);
-  }
 }
 
 void loop()
