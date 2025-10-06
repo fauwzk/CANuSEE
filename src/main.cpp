@@ -18,6 +18,8 @@ BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
 #define DEBUG_PORT Serial
 #define ELM327_BT_PIN "1234"
+ELM327 myELM327;
+uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 
 // ==== Gauge setup ====
 const int centerX = 64;
@@ -36,14 +38,12 @@ unsigned long lastSwitch = 0;
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 300;
 
-ELM327 myELM327;
-
-uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
-
+// ==== Bluetooth setup ====
 #define BT_DISCOVER_TIME 500000
 esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC_AUTHENTICATE to request pincode confirmation
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
+// ==== Function prototypes ====
 float turbo_kpa = 0.0;
 float coolant_temp = 0.0;
 float intake_temp = 0.0;
@@ -64,7 +64,7 @@ void restart_ESP()
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_24);
-  display.drawString(64, 25, "REBOOTING");
+  display.drawString(64, 25, "REBOOTING!");
   display.display();
   delay(1000);
   ESP.restart();
@@ -109,7 +109,11 @@ void draw_BoostScreen()
   {
     boostPressure = turbo_kpa;
   }
-  draw_InfoText("Boost", boostPressure, "kPa");
+  else
+  {
+    boostPressure = 0.0;
+  }
+  draw_InfoText("Pression MAF", boostPressure, "kPa");
 }
 
 void draw_IntakeTempScreen()
@@ -118,6 +122,10 @@ void draw_IntakeTempScreen()
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
     intakeTemp = intake_temp;
+  }
+  else
+  {
+    intakeTemp = 0.0;
   }
   draw_InfoText("Temp admission", intakeTemp, "°C");
 }
@@ -129,6 +137,10 @@ void draw_EngineLoadScreen()
   {
     engineLoad = engine_load;
   }
+  else
+  {
+    engineLoad = 0.0;
+  }
   draw_InfoText("Charge moteur", engineLoad, "%");
 }
 
@@ -138,6 +150,10 @@ void draw_BatteryVoltageScreen()
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
     batteryVoltage = battery_voltage;
+  }
+  else
+  {
+    batteryVoltage = 0.0;
   }
   draw_InfoText("Tension Bat", batteryVoltage, "V");
 }
@@ -149,6 +165,10 @@ void draw_OilTempScreen()
   {
     oilTemp = oil_temp;
   }
+  else
+  {
+    oilTemp = 0.0;
+  }
   draw_InfoText("Temp Huile", oilTemp, "°C");
 }
 
@@ -159,12 +179,16 @@ void draw_CoolantTempScreen()
   {
     coolantTemp = coolant_temp;
   }
+  else
+  {
+    coolantTemp = 0.0;
+  }
   draw_InfoText("Temp LdR", coolantTemp, "°C");
 }
 
 void draw_NoDataScreen()
 {
-  draw_InfoText("No Data", 0, "");
+  draw_InfoText("Comment ça va?", 0, "N/A");
 }
 
 void draw_GaugeScreen(uint8_t index)
