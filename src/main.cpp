@@ -33,7 +33,7 @@ const int minAngle = -120;
 const int maxAngle = 120;
 
 // ==== Screen control ====
-const int screenNumbers = 7;
+const int screenNumbers = 6;
 uint8_t screenIndex = 0;
 unsigned long lastSwitch = 0;
 
@@ -48,25 +48,25 @@ esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
 // ==== Variables for OBD-II data ====
-float atmo_kpa = 0.0;
-float maf_kpa = 0.0;
-float coolant_temp = 0.0;
-float intake_temp = 0.0;
-float engine_load = 0.0;
-float battery_voltage = 0.0;
-float oil_temp = 0.0;
-float turbo_pressure = 0.0;
+double atmo_kpa = 0.0;
+double maf_kpa = 0.0;
+double coolant_temp = 0.0;
+double intake_temp = 0.0;
+double engine_load = 0.0;
+double battery_voltage = 0.0;
+double oil_temp = 0.0;
+double turbo_pressure = 0.0;
 
 // ==== Variables to hold last valid readings ====
-float atmoPressure = 0.0;
-float mafPressure = 0.0;
-float intakeTemp = 0.0;
-float engineLoad = 0.0;
-float coolantTemp = 0.0;
-float batteryVoltage = 0.0;
-float fuelLevel = 0.0;
-float oilTemp = 0.0;
-float turboPressure = 0.0;
+double atmoPressure = 0.0;
+double mafPressure = 0.0;
+double intakeTemp = 0.0;
+double engineLoad = 0.0;
+double coolantTemp = 0.0;
+double batteryVoltage = 0.0;
+double fuelLevel = 0.0;
+double oilTemp = 0.0;
+double turboPressure = 0.0;
 
 // ==== Restart ESP ====
 void restart_ESP()
@@ -109,17 +109,16 @@ void draw_ScreenNumber(uint8_t index)
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_10);
   display.drawString(0, 52, String(index + 1) + "/" + String(screenNumbers));
-  display.drawString(0, 0, String(index + 1) + "/" + String(screenNumbers));
 }
 
 // ==== Draw info text screen ====
-void draw_InfoText(String title, float value, String unit)
+void draw_InfoText(String title, double value, String unit)
 {
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
   display.drawString(centerX, 0, title);
   display.setFont(ArialMT_Plain_24);
-  display.drawString(centerX, 20, String(value, 0) + " " + unit);
+  display.drawString(centerX, 20, String(value) + " " + unit);
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
@@ -127,20 +126,28 @@ void draw_InfoText(String title, float value, String unit)
 
 void get_AtmosphericPressure()
 {
-  atmo_kpa = myELM327.absBaroPressure();
-  while (myELM327.nb_rx_state != ELM_SUCCESS)
+  if (0 == 1)
   {
-    displayInfo("Getting\nPressure...");
-    display.display();
-    delay(100);
-  }
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    atmoPressure = atmo_kpa;
+    atmo_kpa = myELM327.absBaroPressure();
+    while (myELM327.nb_rx_state != ELM_SUCCESS)
+    {
+      displayInfo("Getting\nPressure...");
+      display.display();
+      delay(100);
+    }
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      atmoPressure = atmo_kpa;
+    }
+    else
+    {
+      atmoPressure = 0.0;
+    }
   }
   else
   {
-    atmoPressure = 0.0;
+    atmo_kpa = 100.0;
+    atmoPressure = atmo_kpa;
   }
 }
 
@@ -150,10 +157,6 @@ void draw_MAFScreen()
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
     mafPressure = maf_kpa;
-  }
-  else
-  {
-    mafPressure = 0.0;
   }
   draw_InfoText("Pression MAF", mafPressure, "kPa");
 }
@@ -165,10 +168,6 @@ void draw_IntakeTempScreen()
   {
     intakeTemp = intake_temp;
   }
-  else
-  {
-    intakeTemp = 0.0;
-  }
   draw_InfoText("Temp admission", intakeTemp, "°C");
 }
 
@@ -178,10 +177,6 @@ void draw_EngineLoadScreen()
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
     engineLoad = engine_load;
-  }
-  else
-  {
-    engineLoad = 0.0;
   }
   draw_InfoText("Charge moteur", engineLoad, "%");
 }
@@ -193,25 +188,7 @@ void draw_BatteryVoltageScreen()
   {
     batteryVoltage = battery_voltage;
   }
-  else
-  {
-    batteryVoltage = 0.0;
-  }
   draw_InfoText("Tension Bat", batteryVoltage, "V");
-}
-
-void draw_OilTempScreen()
-{
-  oil_temp = myELM327.oilTemp(); // Placeholder, replace with actual oil temp PID if available
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    oilTemp = oil_temp;
-  }
-  else
-  {
-    oilTemp = 0.0;
-  }
-  draw_InfoText("Temp Huile", oilTemp, "°C");
 }
 
 void draw_CoolantTempScreen()
@@ -221,10 +198,6 @@ void draw_CoolantTempScreen()
   {
     coolantTemp = coolant_temp;
   }
-  else
-  {
-    coolantTemp = 0.0;
-  }
   draw_InfoText("Temp LdR", coolantTemp, "°C");
 }
 
@@ -233,13 +206,9 @@ void draw_TurboPressureScreen()
   turbo_pressure = myELM327.manifoldPressure();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
-    turbo_pressure -= atmoPressure;
-    turbo_pressure /= 100.0; // Convert kPa to bar
+    turbo_pressure = turbo_pressure - 100;  // Gauge pressure = absolute - atmospheric
+    turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
     turboPressure = turbo_pressure;
-  }
-  else
-  {
-    turboPressure = 0.0;
   }
   draw_InfoText("Pression Turbo", turboPressure, "Bar");
 }
@@ -258,22 +227,19 @@ void draw_GaugeScreen(uint8_t index)
     draw_MAFScreen();
     break;
   case 1:
-    draw_IntakeTempScreen();
+    draw_TurboPressureScreen();
     break;
   case 2:
-    draw_EngineLoadScreen();
+    draw_IntakeTempScreen();
     break;
   case 3:
-    draw_BatteryVoltageScreen();
+    draw_EngineLoadScreen();
     break;
   case 4:
-    draw_OilTempScreen();
+    draw_BatteryVoltageScreen();
     break;
   case 5:
     draw_CoolantTempScreen();
-    break;
-  case 6:
-    draw_TurboPressureScreen();
     break;
   default:
     draw_NoDataScreen();
@@ -366,7 +332,7 @@ void setup()
   delay(2000); // wait for connection
 
   // Connect to the paired device by MAC address
-  draw_BottomText("BT Connect");
+  draw_BottomText("BT Connecting...");
   display.display();
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
@@ -378,7 +344,7 @@ void setup()
   display.display();
 
   // ==== ELM327 init ====
-  draw_BottomText("ELM327 Init");
+  draw_BottomText("ELM327 Init...");
   display.display();
   if (!myELM327.begin(SerialBT, true, 2000))
   {
@@ -410,7 +376,6 @@ void loop()
   // ==== Check button press ====
   if (digitalRead(BUTTON_PIN) == LOW && (millis() - lastButtonPress) > debounceDelay)
   {
-
     lastButtonPress = millis();
     fadeTransition((screenIndex + 1) % screenNumbers);
     screenIndex = (screenIndex + 1) % screenNumbers;
