@@ -4,9 +4,13 @@
 #include "ELMduino.h"
 #include <SSD1306Wire.h>
 
+// ==== EEPROM Setup ====
 #define EEPROM_SIZE 1
 
+// ==== Debug Mode ====
 bool debug = false;
+
+// ==== Version ====
 String version = "v0.5";
 String version_string = "CANuSEE " + version;
 
@@ -59,6 +63,7 @@ float batteryVoltage = 0.0;
 float fuelLevel = 0.0;
 float oilTemp = 0.0;
 
+// ==== Restart ESP ====
 void restart_ESP()
 {
   display.clear();
@@ -70,6 +75,7 @@ void restart_ESP()
   ESP.restart();
 }
 
+// ==== Draw screen number ====
 void draw_ScreenNumber(uint8_t index)
 {
   display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -88,10 +94,9 @@ void draw_BotomText(String text)
   display.drawString(centerX, 52, text);
 }
 
-// ==== Draw semicircular gauge ====
+// ==== Draw info text screen ====
 void draw_InfoText(String title, float value, String unit)
 {
-  // Labels
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
   display.drawString(centerX, 0, title);
@@ -191,6 +196,7 @@ void draw_NoDataScreen()
   draw_InfoText("Comment ça va?", 0, "N/A");
 }
 
+// ==== Draw gauge screen based on index ====
 void draw_GaugeScreen(uint8_t index)
 {
   switch (index)
@@ -231,6 +237,7 @@ void displayError(String msg)
   display.display();
 }
 
+// ==== Fade transition effect ====
 void fadeTransition(uint8_t nextScreen)
 {
   const int steps = 10;
@@ -250,8 +257,10 @@ void fadeTransition(uint8_t nextScreen)
   }
 }
 
+// ==== Setup function ====
 void setup()
 {
+  // ==== Basic setup ====
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
@@ -269,9 +278,9 @@ void setup()
   display.display();
   delay(1000);
 
+  // ==== EEPROM init ====
   draw_BotomText("EEPROM Init");
   display.display();
-  // ==== EEPROM init ====
   EEPROM.begin(EEPROM_SIZE);
   draw_BotomText("EEPROM Init done");
   display.display();
@@ -295,20 +304,26 @@ void setup()
     delay(1000);
     restart_ESP();
   }
-  draw_BotomText("BT Scan");
+  draw_BotomText("BT Init done");
   display.display();
   SerialBT.setPin(ELM327_BT_PIN);
   delay(2000); // wait for connection
+
   // Connect to the paired device by MAC address
+  draw_BotomText("BT Connect");
+  display.display();
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
     displayError("BT Conn FAIL");
     delay(1000);
     restart_ESP();
   }
-  draw_BotomText("BT Initialized");
+  draw_BotomText("BT Connected");
   display.display();
 
+  // ==== ELM327 init ====
+  draw_BotomText("ELM327 Init");
+  display.display();
   if (!myELM327.begin(SerialBT, true, 2000))
   {
     displayError("ELM327 INIT FAIL");
@@ -319,6 +334,8 @@ void setup()
   display.display();
 
   delay(500);
+
+  // ==== Initial screen ====
   display.clear();
   display.setFont(ArialMT_Plain_16);
   display.invertDisplay();
@@ -328,10 +345,13 @@ void setup()
   display.normalDisplay();
 }
 
+// ==== Main loop ====
 void loop()
 {
+  // Clear display for new frame
   display.clear();
 
+  // ==== Check button press ====
   if (digitalRead(BUTTON_PIN) == LOW && (millis() - lastButtonPress) > debounceDelay)
   {
     lastButtonPress = millis();
