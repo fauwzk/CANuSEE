@@ -230,10 +230,19 @@ void setup()
   display.display();
   // ==== EEPROM init ====
   EEPROM.begin(EEPROM_SIZE);
-  screenIndex = EEPROM.read(0);
   draw_BotomText("EEPROM Init done");
   display.display();
   delay(500);
+
+  // Read the last screen index from EEPROM
+  screenIndex = EEPROM.read(0);
+  if (screenIndex >= screenNumbers)
+  {
+    screenIndex = 0; // Reset to 0 if out of bounds
+  }
+  draw_BotomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
+  display.display();
+
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("elmFauwzk", true))
   { // true = master mode
