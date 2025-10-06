@@ -80,15 +80,6 @@ void restart_ESP()
   ESP.restart();
 }
 
-// ==== Draw screen number ====
-void draw_ScreenNumber(uint8_t index)
-{
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 52, String(index + 1) + "/" + String(screenNumbers));
-  display.drawString(0, 0, String(index + 1) + "/" + String(screenNumbers));
-}
-
 // ==== Draw bottom text ====
 void draw_BottomText(String text)
 {
@@ -99,6 +90,26 @@ void draw_BottomText(String text)
   display.fillRect(0, 54, 128, 10);
   display.setColor(WHITE);
   display.drawString(centerX, 52, text);
+}
+
+// ==== Display info ====
+void displayInfo(String msg)
+{
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_24);
+  display.drawString(64, 25, "Info:");
+  draw_BottomText(msg);
+  display.display();
+}
+
+// ==== Draw screen number ====
+void draw_ScreenNumber(uint8_t index)
+{
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(0, 52, String(index + 1) + "/" + String(screenNumbers));
+  display.drawString(0, 0, String(index + 1) + "/" + String(screenNumbers));
 }
 
 // ==== Draw info text screen ====
@@ -268,17 +279,6 @@ void draw_GaugeScreen(uint8_t index)
     draw_NoDataScreen();
     break;
   }
-}
-
-// ==== Display info ====
-void displayInfo(String msg)
-{
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_24);
-  display.drawString(64, 25, "Info:");
-  draw_BottomText(msg);
-  display.display();
 }
 
 // ==== Display error ====
