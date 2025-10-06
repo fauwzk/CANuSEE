@@ -73,7 +73,7 @@ void restart_ESP()
 {
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_24);
+  display.setFont(ArialMT_Plain_16);
   display.drawString(64, 25, "REBOOTING!");
   display.display();
   delay(1000);
@@ -133,7 +133,6 @@ void get_AtmosphericPressure()
     {
       displayInfo("Getting\nPressure...");
       display.display();
-      delay(100);
     }
     if (myELM327.nb_rx_state == ELM_SUCCESS)
     {
