@@ -81,7 +81,8 @@ void draw_ScreenNumber(uint8_t index)
 {
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 52, "Screen " + String(index + 1) + "/" + String(screenNumbers));
+  display.drawString(0, 52, String(index + 1) + "/" + String(screenNumbers));
+  display.drawString(0, 0, String(index + 1) + "/" + String(screenNumbers));
 }
 
 // ==== Draw bottom text ====
