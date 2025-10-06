@@ -71,6 +71,7 @@ double turboPressure = 0.0;
 // ==== Restart ESP ====
 void restart_ESP()
 {
+  display.normalDisplay();
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
@@ -359,7 +360,6 @@ void setup()
   // ==== Initial screen ====
   display.clear();
   display.setFont(ArialMT_Plain_16);
-  display.invertDisplay();
   display.drawString(64, 25, "All up!");
   display.display();
   delay(750);
