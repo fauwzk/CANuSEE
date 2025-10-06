@@ -33,7 +33,7 @@ const int minAngle = -120;
 const int maxAngle = 120;
 
 // ==== Screen control ====
-const int screenNumbers = 6;
+const int screenNumbers = 7;
 uint8_t screenIndex = 0;
 unsigned long lastSwitch = 0;
 
@@ -48,21 +48,25 @@ esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
 // ==== Variables for OBD-II data ====
-float turbo_kpa = 0.0;
+float atmo_kpa = 0.0;
+float maf_kpa = 0.0;
 float coolant_temp = 0.0;
 float intake_temp = 0.0;
 float engine_load = 0.0;
 float battery_voltage = 0.0;
 float oil_temp = 0.0;
+float turbo_pressure = 0.0;
 
 // ==== Variables to hold last valid readings ====
-float boostPressure = 0.0;
+float atmoPressure = 0.0;
+float mafPressure = 0.0;
 float intakeTemp = 0.0;
 float engineLoad = 0.0;
 float coolantTemp = 0.0;
 float batteryVoltage = 0.0;
 float fuelLevel = 0.0;
 float oilTemp = 0.0;
+float turboPressure = 0.0;
 
 // ==== Restart ESP ====
 void restart_ESP()
@@ -110,18 +114,37 @@ void draw_InfoText(String title, float value, String unit)
   display.display();
 }
 
-void draw_BoostScreen()
+void get_AtmosphericPressure()
 {
-  turbo_kpa = myELM327.manifoldPressure();
+  atmo_kpa = myELM327.absBaroPressure();
+  while (myELM327.nb_rx_state != ELM_SUCCESS)
+  {
+    displayInfo("Getting\nPressure...");
+    display.display();
+    delay(100);
+  }
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
-    boostPressure = turbo_kpa;
+    atmoPressure = atmo_kpa;
   }
   else
   {
-    boostPressure = 0.0;
+    atmoPressure = 0.0;
   }
-  draw_InfoText("Pression MAF", boostPressure, "kPa");
+}
+
+void draw_MAFScreen()
+{
+  maf_kpa = myELM327.manifoldPressure();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    mafPressure = maf_kpa;
+  }
+  else
+  {
+    mafPressure = 0.0;
+  }
+  draw_InfoText("Pression MAF", mafPressure, "kPa");
 }
 
 void draw_IntakeTempScreen()
@@ -194,6 +217,22 @@ void draw_CoolantTempScreen()
   draw_InfoText("Temp LdR", coolantTemp, "°C");
 }
 
+void draw_TurboPressureScreen()
+{ // Turbo pressure calculation:
+  turbo_pressure = myELM327.manifoldPressure();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    turbo_pressure -= atmoPressure;
+    turbo_pressure /= 100.0; // Convert kPa to bar
+    turboPressure = turbo_pressure;
+  }
+  else
+  {
+    turboPressure = 0.0;
+  }
+  draw_InfoText("Pression Turbo", turboPressure, "Bar");
+}
+
 void draw_NoDataScreen()
 {
   draw_InfoText("Comment ça va?", 0, "N/A");
@@ -205,7 +244,7 @@ void draw_GaugeScreen(uint8_t index)
   switch (index)
   {
   case 0:
-    draw_BoostScreen();
+    draw_MAFScreen();
     break;
   case 1:
     draw_IntakeTempScreen();
@@ -222,10 +261,24 @@ void draw_GaugeScreen(uint8_t index)
   case 5:
     draw_CoolantTempScreen();
     break;
+  case 6:
+    draw_TurboPressureScreen();
+    break;
   default:
     draw_NoDataScreen();
     break;
   }
+}
+
+// ==== Display info ====
+void displayInfo(String msg)
+{
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_24);
+  display.drawString(64, 25, "Info:");
+  draw_BottomText(msg);
+  display.display();
 }
 
 // ==== Display error ====
@@ -357,6 +410,7 @@ void loop()
   // ==== Check button press ====
   if (digitalRead(BUTTON_PIN) == LOW && (millis() - lastButtonPress) > debounceDelay)
   {
+
     lastButtonPress = millis();
     fadeTransition((screenIndex + 1) % screenNumbers);
     screenIndex = (screenIndex + 1) % screenNumbers;

@@ -14,7 +14,7 @@ ELM327 myELM327;
 #define BUTTON_PIN 32
 
 // ==== Data ====
-float boostPressure = 0.0;
+float mafPressure = 0.0;
 float coolantTemp = 0.0;
 
 // ==== Gauge setup ====
@@ -104,12 +104,12 @@ void loop()
 
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
-    boostPressure = tmpBoost - 100.0; // convert absolute → relative
+    mafPressure = tmpBoost - 100.0; // convert absolute → relative
     coolantTemp = tmpCoolant;
   }
 
   // Clamp
-  boostPressure = constrain(boostPressure, 0, 250);
+  mafPressure = constrain(mafPressure, 0, 250);
   coolantTemp = constrain(coolantTemp, -40, 150);
 
   // ==== Handle switching ====
@@ -132,7 +132,7 @@ void loop()
   // ==== Draw current gauge ====
   display.clear();
   if (screenIndex == 0)
-    draw_InfoText("BOOST", boostPressure, "kPa", 0, 250);
+    draw_InfoText("BOOST", mafPressure, "kPa", 0, 250);
   else
     draw_InfoText("COOLANT", coolantTemp, "°C", -40, 150);
 
@@ -191,7 +191,7 @@ void fadeTransition(uint8_t nextScreen)
 
   display.clear();
   if (nextScreen == 0)
-    draw_InfoText("BOOST", boostPressure, "kPa", 0, 250);
+    draw_InfoText("BOOST", mafPressure, "kPa", 0, 250);
   else
     draw_InfoText("COOLANT", coolantTemp, "°C", -40, 150);
 
