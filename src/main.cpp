@@ -102,82 +102,96 @@ void draw_InfoText(String title, float value, String unit)
   display.display();
 }
 
-void draw_BoostScreen() {
+void draw_BoostScreen()
+{
   turbo_kpa = myELM327.manifoldPressure();
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     boostPressure = turbo_kpa;
   }
   draw_InfoText("Boost", boostPressure, "kPa");
 }
 
-void draw_IntakeTempScreen() {
+void draw_IntakeTempScreen()
+{
   intake_temp = myELM327.intakeAirTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     intakeTemp = intake_temp;
   }
   draw_InfoText("Temp admission", intakeTemp, "°C");
 }
 
-void draw_EngineLoadScreen() {
+void draw_EngineLoadScreen()
+{
   engine_load = myELM327.engineLoad();
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     engineLoad = engine_load;
   }
   draw_InfoText("Charge moteur", engineLoad, "%");
 }
 
-void draw_BatteryVoltageScreen() {
+void draw_BatteryVoltageScreen()
+{
   battery_voltage = myELM327.batteryVoltage();
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     batteryVoltage = battery_voltage;
   }
   draw_InfoText("Tension Bat", batteryVoltage, "V");
 }
 
-void draw_OilTempScreen() {
+void draw_OilTempScreen()
+{
   oil_temp = myELM327.oilTemp(); // Placeholder, replace with actual oil temp PID if available
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     oilTemp = oil_temp;
   }
   draw_InfoText("Temp Huile", oilTemp, "°C");
 }
 
-void draw_CoolantTempScreen() {
+void draw_CoolantTempScreen()
+{
   coolant_temp = myELM327.engineCoolantTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS) {
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
     coolantTemp = coolant_temp;
   }
   draw_InfoText("Temp LdR", coolantTemp, "°C");
 }
 
-void draw_NoDataScreen() {
+void draw_NoDataScreen()
+{
   draw_InfoText("No Data", 0, "");
 }
 
 void draw_GaugeScreen(uint8_t index)
 {
-  switch (index) {
-    case 0:
-      draw_BoostScreen();
-      break;
-    case 1:
-      draw_IntakeTempScreen();
-      break;
-    case 2:
-      draw_EngineLoadScreen();
-      break;
-    case 3:
-      draw_BatteryVoltageScreen();
-      break;
-    case 4:
-      draw_OilTempScreen();
-      break;
-    case 5:
-      draw_CoolantTempScreen();
-      break;
-    default:
-      draw_NoDataScreen();
-      break;
+  switch (index)
+  {
+  case 0:
+    draw_BoostScreen();
+    break;
+  case 1:
+    draw_IntakeTempScreen();
+    break;
+  case 2:
+    draw_EngineLoadScreen();
+    break;
+  case 3:
+    draw_BatteryVoltageScreen();
+    break;
+  case 4:
+    draw_OilTempScreen();
+    break;
+  case 5:
+    draw_CoolantTempScreen();
+    break;
+  default:
+    draw_NoDataScreen();
+    break;
   }
 }
 
@@ -216,6 +230,7 @@ void setup()
   display.display();
   // ==== EEPROM init ====
   EEPROM.begin(EEPROM_SIZE);
+  screenIndex = EEPROM.read(0);
   draw_BotomText("EEPROM Init done");
   display.display();
   delay(500);
@@ -289,6 +304,8 @@ void loop()
     lastButtonPress = millis();
     fadeTransition((screenIndex + 1) % screenNumbers);
     screenIndex = (screenIndex + 1) % screenNumbers;
+    EEPROM.write(0, screenIndex);
+    EEPROM.commit();
     lastSwitch = millis();
   }
 
