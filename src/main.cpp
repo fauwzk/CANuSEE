@@ -47,7 +47,7 @@ const unsigned long debounceDelay = 300;
 esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC_AUTHENTICATE to request pincode confirmation
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
-// ==== Function prototypes ====
+// ==== Variables for OBD-II data ====
 float turbo_kpa = 0.0;
 float coolant_temp = 0.0;
 float intake_temp = 0.0;
@@ -55,6 +55,7 @@ float engine_load = 0.0;
 float battery_voltage = 0.0;
 float oil_temp = 0.0;
 
+// ==== Variables to hold last valid readings ====
 float boostPressure = 0.0;
 float intakeTemp = 0.0;
 float engineLoad = 0.0;
