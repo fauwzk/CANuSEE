@@ -83,8 +83,9 @@ void draw_ScreenNumber(uint8_t index)
   display.setFont(ArialMT_Plain_10);
   display.drawString(0, 52, "Screen " + String(index + 1) + "/" + String(screenNumbers));
 }
+
 // ==== Draw bottom text ====
-void draw_BotomText(String text)
+void draw_BottomText(String text)
 {
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_10);
@@ -103,7 +104,7 @@ void draw_InfoText(String title, float value, String unit)
   display.drawString(centerX, 0, title);
   display.setFont(ArialMT_Plain_24);
   display.drawString(centerX, 20, String(value, 0) + " " + unit);
-  draw_BotomText(version_string);
+  draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
 }
@@ -234,7 +235,7 @@ void displayError(String msg)
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_24);
   display.drawString(64, 25, "ERROR!");
-  draw_BotomText(msg);
+  draw_BottomText(msg);
   display.display();
 }
 
@@ -272,18 +273,18 @@ void setup()
   display.setFont(ArialMT_Plain_16);
   display.drawString(4, 0, "Fauwzk"); // Top left
   display.drawString(32, 16, "Engineering");
-  draw_BotomText(version_string);
+  draw_BottomText(version_string);
   display.display();
   delay(1000);
-  draw_BotomText("Starting...");
+  draw_BottomText("Starting...");
   display.display();
   delay(1000);
 
   // ==== EEPROM init ====
-  draw_BotomText("EEPROM Init");
+  draw_BottomText("EEPROM Init");
   display.display();
   EEPROM.begin(EEPROM_SIZE);
-  draw_BotomText("EEPROM Init done");
+  draw_BottomText("EEPROM Init done");
   display.display();
   delay(500);
 
@@ -293,25 +294,25 @@ void setup()
   {
     screenIndex = 0; // Reset to 0 if out of bounds
   }
-  draw_BotomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
+  draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
   display.display();
 
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("elmFauwzk", true))
   { // true = master mode
-    draw_BotomText("BT INIT FAIL");
+    draw_BottomText("BT INIT FAIL");
     display.invertDisplay();
     display.display();
     delay(1000);
     restart_ESP();
   }
-  draw_BotomText("BT Init done");
+  draw_BottomText("BT Init done");
   display.display();
   SerialBT.setPin(ELM327_BT_PIN);
   delay(2000); // wait for connection
 
   // Connect to the paired device by MAC address
-  draw_BotomText("BT Connect");
+  draw_BottomText("BT Connect");
   display.display();
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
@@ -319,11 +320,11 @@ void setup()
     delay(1000);
     restart_ESP();
   }
-  draw_BotomText("BT Connected");
+  draw_BottomText("BT Connected");
   display.display();
 
   // ==== ELM327 init ====
-  draw_BotomText("ELM327 Init");
+  draw_BottomText("ELM327 Init");
   display.display();
   if (!myELM327.begin(SerialBT, true, 2000))
   {
@@ -331,7 +332,7 @@ void setup()
     delay(1000);
     restart_ESP();
   }
-  draw_BotomText("ELM327 Connected");
+  draw_BottomText("ELM327 Connected");
   display.display();
 
   delay(500);
