@@ -186,7 +186,7 @@ void draw_BatteryVoltageScreen()
   battery_voltage = myELM327.batteryVoltage();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
-    batteryVoltage = battery_voltage;
+    batteryVoltage = battery_voltage - 2.0; // Adjust for alternator voltage drop
   }
   draw_InfoText("Tension Bat", batteryVoltage, "V");
 }
