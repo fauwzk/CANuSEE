@@ -213,6 +213,18 @@ void draw_TurboPressureScreen()
   draw_InfoText("Pression Turbo", turboPressure, "Bar");
 }
 
+// ==== Display error ====
+void displayError(String msg)
+{
+  display.clear();
+  display.invertDisplay();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_24);
+  display.drawString(64, 25, "ERROR!");
+  draw_BottomText(msg);
+  display.display();
+}
+
 void draw_NoDataScreen()
 {
   displayError("Screen Error");
@@ -247,18 +259,6 @@ void draw_GaugeScreen(uint8_t index)
     draw_NoDataScreen();
     break;
   }
-}
-
-// ==== Display error ====
-void displayError(String msg)
-{
-  display.clear();
-  display.invertDisplay();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_24);
-  display.drawString(64, 25, "ERROR!");
-  draw_BottomText(msg);
-  display.display();
 }
 
 // ==== Fade transition effect ====
