@@ -118,6 +118,8 @@ void draw_ScreenNumber(uint8_t index)
 // ==== Draw info text screen ====
 void draw_InfoText(String title, double value, String unit)
 {
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
   display.drawString(centerX, 0, title);
@@ -130,9 +132,6 @@ void draw_InfoText(String title, double value, String unit)
   {
     display.drawString(centerX, 20, String(value) + " " + unit);
   }
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-  delay(10);
   display.display();
 }
 
@@ -518,14 +517,14 @@ void loop()
       {
         // If on DTC screen, reset DTC codes
         myELM327.resetDTC();
-        displayInfo("DTC Codes\nCleared!");
+        displayInfo("No more DTC!");
         display.display();
         delay(1000);
       }
       else
       {
         // ==== LONG PRESS ACTION ====
-        displayInfo("Long press!\nRebooting...");
+        displayInfo("Rebooting...");
         display.display();
         delay(1000);
         restart_ESP();
