@@ -119,7 +119,14 @@ void draw_InfoText(String title, double value, String unit)
   display.setFont(ArialMT_Plain_16);
   display.drawString(centerX, 0, title);
   display.setFont(ArialMT_Plain_24);
-  display.drawString(centerX, 20, String(value) + " " + unit);
+  if (value == (int)value)
+  {
+    display.drawString(centerX, 20, String((int)value) + " " + unit);
+  }
+  else
+  {
+    display.drawString(centerX, 20, String(value) + " " + unit);
+  }
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
