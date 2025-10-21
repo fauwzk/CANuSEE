@@ -227,7 +227,8 @@ void draw_dtcCodes()
   }
   else
   {
-    for (uint8_t i = 0; i < myELM327.DTC_Response.codesFound; i++)
+    int numberCodes = myELM327.DTC_Response.codesFound;
+    for (uint8_t i = 0; i < numberCodes; i++)
     {
       display.drawString(centerX, 15 + (i * 10), String(myELM327.DTC_Response.codes[i]));
     }
