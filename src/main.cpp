@@ -318,6 +318,7 @@ void setup()
   }
   draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
   display.display();
+  delay(1000);
 
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("elmFauwzk", true))
