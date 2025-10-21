@@ -215,7 +215,9 @@ void draw_TurboPressureScreen()
 
 void draw_NoDataScreen()
 {
-  draw_InfoText("Comment ça va?", 0, "N/A");
+  displayError("Screen Error");
+  delay(1000);
+  restart_ESP();
 }
 
 // ==== Draw gauge screen based on index ====
