@@ -227,64 +227,57 @@ void draw_TurboPressureScreen()
 void draw_dtcCodes()
 {
   myELM327.currentDTCCodes(true);
-  if (0 == 0)
+  // --- Configuration de base de l'affichage ---
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(centerX, 0, "DTC Codes:");
+
+  // --- Police plus petite pour la liste ---
+  display.setFont(ArialMT_Plain_10);
+
+  uint8_t codesFound = myELM327.DTC_Response.codesFound;
+
+  if (codesFound == 0)
   {
-    // --- Configuration de base de l'affichage ---
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(centerX, 0, "DTC Codes:");
-
-    // --- Police plus petite pour la liste ---
-    display.setFont(ArialMT_Plain_10);
-
-    uint8_t codesFound = myELM327.DTC_Response.codesFound;
-
-    if (codesFound == 0)
-    {
-      display.drawString(centerX, 20, "No DTC Codes");
-    }
-    else
-    {
-      // --- Réglages de mise en page ---
-      const int colWidth = display.getWidth() / 2; // largeur d'une colonne
-      const int startY = 18;                       // position verticale de départ
-      const int lineHeight = 10;                   // hauteur d'une ligne
-      const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
-
-      static int scrollOffset = 0; // index de défilement
-      static unsigned long lastScrollTime = 0;
-      const unsigned long scrollInterval = 2000; // délai entre défilements (ms)
-
-      // --- Défilement automatique ---
-      if (millis() - lastScrollTime > scrollInterval)
-      {
-        scrollOffset++;
-        if (scrollOffset > (codesFound - visibleItems))
-          scrollOffset = 0;
-        lastScrollTime = millis();
-      }
-
-      // --- Affichage des codes visibles ---
-      for (uint8_t i = 0; i < visibleItems; i++)
-      {
-        int index = i + scrollOffset;
-        if (index >= codesFound)
-          break;
-
-        int col = i / itemsPerCol; // 0 = gauche, 1 = droite
-        int row = i % itemsPerCol;
-
-        int x = (col == 0) ? colWidth / 2 : (colWidth + colWidth / 2);
-        int y = startY + (row * lineHeight);
-
-        String codeText = String(index + 1) + ". " + String(myELM327.DTC_Response.codes[index]);
-        display.drawString(x, y, codeText);
-      }
-    }
+    display.drawString(centerX, 20, "No DTC Codes");
   }
   else
   {
-    draw_InfoText("DTC Codes", myELM327.DTC_Response.codesFound, "");
+    // --- Réglages de mise en page ---
+    const int colWidth = display.getWidth() / 2; // largeur d'une colonne
+    const int startY = 18;                       // position verticale de départ
+    const int lineHeight = 10;                   // hauteur d'une ligne
+    const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
+
+    static int scrollOffset = 0; // index de défilement
+    static unsigned long lastScrollTime = 0;
+    const unsigned long scrollInterval = 2000; // délai entre défilements (ms)
+
+    // --- Défilement automatique ---
+    if (millis() - lastScrollTime > scrollInterval)
+    {
+      scrollOffset++;
+      if (scrollOffset > (codesFound - visibleItems))
+        scrollOffset = 0;
+      lastScrollTime = millis();
+    }
+
+    // --- Affichage des codes visibles ---
+    for (uint8_t i = 0; i < visibleItems; i++)
+    {
+      int index = i + scrollOffset;
+      if (index >= codesFound)
+        break;
+
+      int col = i / itemsPerCol; // 0 = gauche, 1 = droite
+      int row = i % itemsPerCol;
+
+      int x = (col == 0) ? colWidth / 2 : (colWidth + colWidth / 2);
+      int y = startY + (row * lineHeight);
+
+      String codeText = String(index + 1) + ". " + String(myELM327.DTC_Response.codes[index]);
+      display.drawString(x, y, codeText);
+    }
   }
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
@@ -362,6 +355,25 @@ void fadeTransition(uint8_t nextScreen)
   }
 }
 
+void drawSpinner()
+{
+  unsigned long waitStart = millis();
+  const unsigned long waitTimeout = 3000; // 3 secondes max
+  uint8_t spinnerIndex = 0;
+  const char spinnerChars[] = {'|', '/', '-', '\\'}; // animation spinner
+
+  while (myELM327.nb_rx_state == ELM_GETTING_MSG && millis() - waitStart < waitTimeout)
+  {
+    // Affiche une animation fluide dans le bas de l’écran
+    String waitText = "Waiting data ";
+    waitText += spinnerChars[spinnerIndex];
+    draw_BottomText(waitText);
+    display.display();
+
+    spinnerIndex = (spinnerIndex + 1) % 4;
+    delay(120); // vitesse de rotation du spinner
+  }
+}
 // ==== Setup function ====
 void setup()
 {
@@ -486,26 +498,8 @@ void loop()
     {
       // ==== SHORT PRESS ====
       lastButtonPress = millis();
-
-      // ✅ Attendre que la dernière donnée soit complètement reçue avant de changer d’écran
-      unsigned long waitStart = millis();
-      const unsigned long waitTimeout = 3000; // 3 secondes max
-      uint8_t spinnerIndex = 0;
-      const char spinnerChars[] = {'|', '/', '-', '\\'}; // animation spinner
-
-      while (myELM327.nb_rx_state == ELM_GETTING_MSG && millis() - waitStart < waitTimeout)
-      {
-        // Affiche une animation fluide dans le bas de l’écran
-        String waitText = "Waiting data ";
-        waitText += spinnerChars[spinnerIndex];
-        draw_BottomText(waitText);
-        display.display();
-
-        spinnerIndex = (spinnerIndex + 1) % 4;
-        delay(120); // vitesse de rotation du spinner
-      }
-      delay(100);
       myELM327.response = 0;
+      delay(100);
       // Transition vers l’écran suivant une fois les données prêtes
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
@@ -520,13 +514,24 @@ void loop()
   {
     if (millis() - buttonPressTime > longPressDuration)
     {
-      // ==== LONG PRESS ACTION ====
-      displayInfo("Long press!\nRebooting...");
-      display.display();
-      delay(1000);
-      restart_ESP();
+      if (screenIndex == 6)
+      {
+        // If on DTC screen, reset DTC codes
+        myELM327.resetDTC();
+        displayInfo("DTC Codes\nCleared!");
+        display.display();
+        delay(1000);
+      }
+      else
+      {
+        // ==== LONG PRESS ACTION ====
+        displayInfo("Long press!\nRebooting...");
+        display.display();
+        delay(1000);
+        restart_ESP();
 
-      longPressHandled = true;
+        longPressHandled = true;
+      }
     }
   }
 
