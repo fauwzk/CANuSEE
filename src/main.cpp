@@ -520,6 +520,10 @@ void loop()
         displayInfo("No more DTC!");
         display.display();
         delay(1000);
+        if (buttonPressed)
+        {
+          restart_ESP();
+        }
       }
       else
       {
