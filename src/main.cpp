@@ -484,6 +484,20 @@ void loop()
     {
       // ==== SHORT PRESS ====
       lastButtonPress = millis();
+
+      // ✅ Attendre que la dernière donnée soit complètement reçue
+      unsigned long waitStart = millis();
+      const unsigned long waitTimeout = 3000; // 3 secondes max
+
+      draw_BottomText("Waiting for ELM...");
+      display.display();
+
+      while (myELM327.nb_rx_state == ELM_GETTING_MSG && millis() - waitStart < waitTimeout)
+      {
+        delay(10); // petite pause pour ne pas bloquer complètement
+      }
+
+      // Une fois la réception terminée (ou timeout atteint)
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
       EEPROM.write(0, screenIndex);
