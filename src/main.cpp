@@ -485,19 +485,25 @@ void loop()
       // ==== SHORT PRESS ====
       lastButtonPress = millis();
 
-      // ✅ Attendre que la dernière donnée soit complètement reçue
+      // ✅ Attendre que la dernière donnée soit complètement reçue avant de changer d’écran
       unsigned long waitStart = millis();
       const unsigned long waitTimeout = 3000; // 3 secondes max
-
-      draw_BottomText("Waiting for ELM...");
-      display.display();
+      uint8_t spinnerIndex = 0;
+      const char spinnerChars[] = {'|', '/', '-', '\\'}; // animation spinner
 
       while (myELM327.nb_rx_state == ELM_GETTING_MSG && millis() - waitStart < waitTimeout)
       {
-        delay(10); // petite pause pour ne pas bloquer complètement
+        // Affiche une animation fluide dans le bas de l’écran
+        String waitText = "Waiting data ";
+        waitText += spinnerChars[spinnerIndex];
+        draw_BottomText(waitText);
+        display.display();
+
+        spinnerIndex = (spinnerIndex + 1) % 4;
+        delay(120); // vitesse de rotation du spinner
       }
 
-      // Une fois la réception terminée (ou timeout atteint)
+      // Transition vers l’écran suivant une fois les données prêtes
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
       EEPROM.write(0, screenIndex);
