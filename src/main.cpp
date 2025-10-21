@@ -321,7 +321,7 @@ void setup()
   delay(1000);
 
   // ==== Connect to Classic Bluetooth ELM327 ====
-  if (!SerialBT.begin("elmFauwzk", true))
+  if (!SerialBT.begin("CANuSEE", true))
   { // true = master mode
     draw_BottomText("BT INIT FAIL");
     display.invertDisplay();
