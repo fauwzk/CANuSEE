@@ -371,21 +371,57 @@ void setup()
 // ==== Main loop ====
 void loop()
 {
-  // Clear display for new frame
-  display.clear();
+  static bool buttonPressed = false;
+  static unsigned long buttonPressTime = 0;
+  static bool longPressHandled = false;
+  const unsigned long longPressDuration = 2000; // 2 seconds for long press
 
-  // ==== Check button press ====
-  if (digitalRead(BUTTON_PIN) == LOW && (millis() - lastButtonPress) > debounceDelay)
+  // ==== Check button state ====
+  bool buttonState = (digitalRead(BUTTON_PIN) == LOW); // active LOW
+
+  if (buttonState && !buttonPressed)
   {
-    lastButtonPress = millis();
-    fadeTransition((screenIndex + 1) % screenNumbers);
-    screenIndex = (screenIndex + 1) % screenNumbers;
-    EEPROM.write(0, screenIndex);
-    EEPROM.commit();
-    lastSwitch = millis();
+    // Button just pressed
+    buttonPressed = true;
+    buttonPressTime = millis();
+    longPressHandled = false;
+  }
+
+  if (!buttonState && buttonPressed)
+  {
+    // Button just released
+    unsigned long pressDuration = millis() - buttonPressTime;
+    buttonPressed = false;
+
+    if (pressDuration < longPressDuration && (millis() - lastButtonPress) > debounceDelay)
+    {
+      // ==== SHORT PRESS ====
+      lastButtonPress = millis();
+      fadeTransition((screenIndex + 1) % screenNumbers);
+      screenIndex = (screenIndex + 1) % screenNumbers;
+      EEPROM.write(0, screenIndex);
+      EEPROM.commit();
+      lastSwitch = millis();
+    }
+  }
+
+  // ==== Handle long press ====
+  if (buttonPressed && !longPressHandled)
+  {
+    if (millis() - buttonPressTime > longPressDuration)
+    {
+      // ==== LONG PRESS ACTION ====
+      displayInfo("Long press!\nRebooting...");
+      display.display();
+      delay(1000);
+      restart_ESP();
+
+      longPressHandled = true;
+    }
   }
 
   // ==== Draw current gauge ====
+  display.clear();
   draw_GaugeScreen(screenIndex);
   display.display();
 
