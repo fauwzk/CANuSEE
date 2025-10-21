@@ -274,7 +274,7 @@ void draw_dtcCodes()
   }
   else
   {
-    draw_InfoText("DTC Codes", myELM327.DTC_Response.codesFound, "found");
+    draw_InfoText("DTC Codes", myELM327.DTC_Response.codesFound, "");
   }
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
@@ -477,6 +477,10 @@ void loop()
     {
       // ==== SHORT PRESS ====
       lastButtonPress = millis();
+      while (myELM327.nb_rx_state != ELM_SUCCESS)
+      {
+        delay(10);
+      }
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
       EEPROM.write(0, screenIndex);
