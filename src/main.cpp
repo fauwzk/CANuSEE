@@ -237,8 +237,8 @@ void draw_dtcCodes()
       // --- Réglages de mise en page ---
       const int colWidth = display.getWidth() / 2; // largeur d'une colonne
       const int startY = 18;                       // position verticale de départ
-      const int lineHeight = 12;                   // hauteur d'une ligne
-      const int itemsPerCol = 5;                   // lignes par colonne (2 colonnes visibles)
+      const int lineHeight = 10;                   // hauteur d'une ligne
+      const int itemsPerCol = 3;                   // lignes par colonne (2 colonnes visibles)
       const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
 
       static int scrollOffset = 0; // index de défilement
@@ -477,10 +477,6 @@ void loop()
     {
       // ==== SHORT PRESS ====
       lastButtonPress = millis();
-      while (myELM327.nb_rx_state != ELM_SUCCESS)
-      {
-        delay(10);
-      }
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
       EEPROM.write(0, screenIndex);
