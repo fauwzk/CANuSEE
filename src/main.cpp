@@ -36,6 +36,9 @@ const int maxAngle = 120;
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
 unsigned long lastSwitch = 0;
+const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
+
+const unsigned long longPressDuration = 2000; // 2 seconds for long press
 
 // ==== Debounce ====
 #define BUTTON_PIN 32
@@ -129,6 +132,7 @@ void draw_InfoText(String title, double value, String unit)
   }
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
+  delay(10);
   display.display();
 }
 
@@ -245,7 +249,6 @@ void draw_dtcCodes()
       const int colWidth = display.getWidth() / 2; // largeur d'une colonne
       const int startY = 18;                       // position verticale de départ
       const int lineHeight = 10;                   // hauteur d'une ligne
-      const int itemsPerCol = 1;                   // lignes par colonne (2 colonnes visibles)
       const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
 
       static int scrollOffset = 0; // index de défilement
@@ -461,7 +464,6 @@ void loop()
   static bool buttonPressed = false;
   static unsigned long buttonPressTime = 0;
   static bool longPressHandled = false;
-  const unsigned long longPressDuration = 2000; // 2 seconds for long press
 
   // ==== Check button state ====
   bool buttonState = (digitalRead(BUTTON_PIN) == LOW); // active LOW
@@ -502,7 +504,8 @@ void loop()
         spinnerIndex = (spinnerIndex + 1) % 4;
         delay(120); // vitesse de rotation du spinner
       }
-
+      delay(100);
+      myELM327.response = 0;
       // Transition vers l’écran suivant une fois les données prêtes
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
