@@ -33,7 +33,7 @@ const int minAngle = -120;
 const int maxAngle = 120;
 
 // ==== Screen control ====
-const int screenNumbers = 6;
+const int screenNumbers = 7;
 uint8_t screenIndex = 0;
 unsigned long lastSwitch = 0;
 
@@ -213,6 +213,30 @@ void draw_TurboPressureScreen()
   draw_InfoText("Pression Turbo", turboPressure, "Bar");
 }
 
+void draw_dtcCodes()
+{
+  myELM327.currentDTCCodes(true);
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(centerX, 0, "DTC Codes:");
+  display.setFont(ArialMT_Plain_10);
+  if (myELM327.DTC_Response.codesFound == 0)
+  {
+    display.drawString(centerX, 20, "No DTC Codes");
+  }
+  else
+  {
+    for (uint8_t i = 0; i < myELM327.DTC_Response.codesFound; i++)
+    {
+      display.drawString(centerX, 15 + (i * 10), String(myELM327.DTC_Response.codes[i]));
+    }
+  }
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+  display.display();
+}
+
 // ==== Display error ====
 void displayError(String msg)
 {
@@ -254,6 +278,9 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 5:
     draw_CoolantTempScreen();
+    break;
+  case 6:
+    draw_dtcCodes();
     break;
   default:
     draw_NoDataScreen();
@@ -356,6 +383,7 @@ void setup()
     restart_ESP();
   }
   draw_BottomText("ELM327 Connected");
+  myELM327.sendCommand(SET_ISO_BAUD_10400);
   display.display();
 
   delay(500);
@@ -372,6 +400,7 @@ void setup()
 // ==== Main loop ====
 void loop()
 {
+
   static bool buttonPressed = false;
   static unsigned long buttonPressTime = 0;
   static bool longPressHandled = false;
