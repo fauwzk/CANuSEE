@@ -245,7 +245,7 @@ void draw_dtcCodes()
       const int colWidth = display.getWidth() / 2; // largeur d'une colonne
       const int startY = 18;                       // position verticale de départ
       const int lineHeight = 10;                   // hauteur d'une ligne
-      const int itemsPerCol = 3;                   // lignes par colonne (2 colonnes visibles)
+      const int itemsPerCol = 1;                   // lignes par colonne (2 colonnes visibles)
       const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
 
       static int scrollOffset = 0; // index de défilement
