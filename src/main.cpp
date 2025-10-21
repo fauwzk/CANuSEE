@@ -383,9 +383,15 @@ void setup()
     restart_ESP();
   }
   draw_BottomText("ELM327 Connected");
-  myELM327.sendCommand(SET_ISO_BAUD_10400);
   display.display();
+  delay(500);
 
+  draw_BottomText("ELM327 Config...");
+  display.display();
+  myELM327.sendCommand(SET_ISO_BAUD_10400);
+  myELM327.sendCommand(ALLOW_LONG_MESSAGES);
+  draw_BottomText("ELM327 Config done");
+  display.display();
   delay(500);
 
   // ==== Initial screen ====
