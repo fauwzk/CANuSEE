@@ -118,8 +118,8 @@ String generateWebPage()
   html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
   html.replace("%SELECTED_VOLTAGE_TEXT%", (BATTERY_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
-  html.replace("%SELECTED_TEMP_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_TEMP_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
   return html;
 }
 
@@ -214,12 +214,12 @@ void draw_InfoText(String title, double value, String unit)
   }
   display.display();
 }
-
+int barValue;
 // ==== Draw line gauge with graduations ====
 // Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
 {
-  int barValue = value;
+  double barValue = value;
   // Clamp value
   if (barValue < minValue)
     barValue = minValue;
@@ -763,13 +763,15 @@ void setup()
 
   server.on("/save", HTTP_POST, []()
             {
-  if (server.hasArg("min") && server.hasArg("max") && server.hasArg("gauge_type"))
+  if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
+      server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
+      server.hasArg("coolant_gauge_type"))
   {
-    TURBO_MIN_BAR = server.arg("min").toFloat();
-    TURBO_MAX_BAR = server.arg("max").toFloat();
+    TURBO_MIN_BAR = server.arg("boost_min").toFloat();
+    TURBO_MAX_BAR = server.arg("boost_max").toFloat();
     BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
     ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
-    BATTERY_SCREEN = server.arg("battery_gauge_type").toInt();
+    BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
     COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
     saveValues();
     server.send(200, "text/html",

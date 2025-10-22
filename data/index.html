@@ -55,10 +55,10 @@
 
 <body>
     <div class="container">
-        <h2>Boost Gauge Configuration</h2>
+        <h2>CANuSEE Configuration</h2>
         <form action="/save" method="post">
-            <p>Min Boost (bar): <input type="number" step="0.01" name="min" value="%MIN%"></p>
-            <p>Max Boost (bar): <input type="number" step="0.01" name="max" value="%MAX%"></p>
+            <p>Min Boost (bar): <input type="number" step="0.01" name="boost_min" value="%MIN%"></p>
+            <p>Max Boost (bar): <input type="number" step="0.01" name="boost_max" value="%MAX%"></p>
             <p>Boost Gauge type:
                 <select name="boost_gauge_type">
                     <option value="0" %SELECTED_BOOST_TEXT%>Text</option>
@@ -66,7 +66,7 @@
                 </select>
             </p>
             <p>Load Gauge type:
-                <select name="load_gauge_type">
+                <select name="engload_gauge_type">
                     <option value="0" %SELECTED_LOAD_TEXT%>Text</option>
                     <option value="1" %SELECTED_LOAD_GAUGE%>Gauge</option>
                 </select>
@@ -77,10 +77,10 @@
                     <option value="1" %SELECTED_VOLTAGE_GAUGE%>Gauge</option>
                 </select>
             </p>
-            <p>Temp Gauge type:
-                <select name="temp_gauge_type">
-                    <option value="0" %SELECTED_TEMP_TEXT%>Text</option>
-                    <option value="1" %SELECTED_TEMP_GAUGE%>Gauge</option>
+            <p>Coolant Gauge type:
+                <select name="coolant_gauge_type">
+                    <option value="0" %SELECTED_COOLANT_TEXT%>Text</option>
+                    <option value="1" %SELECTED_COOLANT_GAUGE%>Gauge</option>
                 </select>
             </p>
             <button type="submit">💾 Save</button>
