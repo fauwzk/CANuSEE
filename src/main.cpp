@@ -138,49 +138,48 @@ void draw_InfoText(String title, double value, String unit)
 }
 
 // ==== Draw line gauge ====
-// Draws a semi-circular gauge (like a speedometer)
+// Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
 {
-  // Clamp value to range
+  // Clamp value
   if (value < minValue)
     value = minValue;
   if (value > maxValue)
     value = maxValue;
 
-  // Calculate angle range and needle angle
+  // Layout parameters
+  int barX = 14;      // left position
+  int barY = 14;      // top position
+  int barWidth = 100; // total width of the bar
+  int barHeight = 10; // height of the bar
+
+  // Calculate fill width
   double range = maxValue - minValue;
-  double angleRange = maxAngle - minAngle;
-  double angle = minAngle + ((value - minValue) / range) * angleRange;
+  double fillPercent = (value - minValue) / range;
+  int fillWidth = (int)(barWidth * fillPercent);
 
-  // Convert angle to radians
-  double rad = angle * PI / 180.0;
+  // Draw outline
+  display.drawRect(barX, barY, barWidth, barHeight);
 
-  // Gauge background arc (optional tick marks)
-  for (int a = minAngle; a <= maxAngle; a += 6)
-  {
-    double arad = a * PI / 180.0;
-    int x1 = centerX + cos(arad) * (radius - 4);
-    int y1 = centerY + sin(arad) * (radius - 4);
-    int x2 = centerX + cos(arad) * (radius);
-    int y2 = centerY + sin(arad) * (radius);
-    display.drawLine(x1, y1, x2, y2);
-  }
+  // Draw fill (grows with pressure)
+  display.fillRect(barX, barY, fillWidth, barHeight);
 
-  // Draw the needle
-  int needleX = centerX + cos(rad) * (radius - 5);
-  int needleY = centerY + sin(rad) * (radius - 5);
-  display.drawLine(centerX, centerY, needleX, needleY);
+  // Draw min and max labels
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(barX, barY + barHeight + 2, String(minValue));
+  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.drawString(barX + barWidth, barY + barHeight + 2, String(maxValue));
 
-  // Draw the center point
-  display.fillCircle(centerX, centerY, 2);
-
-  // Draw text
+  // Draw label and value
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_10);
   display.drawString(centerX, 0, label);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(centerX, 20, String(value, 1) + " " + unit);
 
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(centerX, barY + barHeight + 10, String(value) + " " + unit);
+
+  // Optional extra info
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
 }
@@ -273,7 +272,7 @@ void draw_TurboPressureScreen()
   }
   if (boostScreenType == 1)
   {
-    draw_LineGauge(turboPressure, 0.0, 2.0, "Pression Turbo", "Bar");
+    draw_LineGauge(turboPressure, -0.4, 1.6, "Pression Turbo", "Bar");
     return;
   }
   else
@@ -599,6 +598,7 @@ void loop()
         displayInfo("No more DTC!");
         display.display();
         delay(1000);
+        longPressHandled = true;
         if (buttonPressed)
         {
           restart_ESP();
