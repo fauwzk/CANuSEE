@@ -15,7 +15,7 @@ const char *ssid = "CANuSEE_Config";
 WebServer server(80);
 
 // ==== EEPROM Setup ====
-#define EEPROM_SIZE 7
+#define EEPROM_SIZE 8
 #define EEPROM_LAST_SCREEN 0
 
 // ==== EEPROM Addresses ====
@@ -25,11 +25,13 @@ WebServer server(80);
 #define EEPROM_ENGLOAD_SCREEN_TYPE 4
 #define EEPROM_BATTERY_SCREEN_TYPE 5
 #define EEPROM_COOLANT_SCREEN_TYPE 6
+#define EEPROM_TICK_LINE_GAUGE 7
 
 uint8_t BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
 uint8_t ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
 uint8_t BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
 uint8_t COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
+uint8_t TICK_LINE_GAUGE = 2;
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -131,6 +133,7 @@ void saveValues()
   EEPROM.put(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
   EEPROM.put(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
   EEPROM.put(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
+  EEPROM.put(EEPROM_TICK_LINE_GAUGE, TICK_LINE_GAUGE);
   EEPROM.commit();
 }
 
@@ -142,6 +145,7 @@ void loadValues()
   EEPROM.get(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
   EEPROM.get(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
   EEPROM.get(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
+  EEPROM.get(EEPROM_TICK_LINE_GAUGE, TICK_LINE_GAUGE);
   // Default if uninitialized or invalid
   if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
   {
@@ -244,7 +248,7 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
   display.fillRect(barX, barY, fillWidth, barHeight);
 
   // ==== Draw graduations ====
-  int tickCount = 5; // number of intermediate marks (between min and max)
+  int tickCount = TICK_LINE_GAUGE; // number of intermediate marks (between min and max)
   int tickHeight = 2;
   int labelOffsetY = barY + barHeight + 2;
 
@@ -262,7 +266,7 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
     display.drawLine(tickX, barY + barHeight, tickX, barY + barHeight + tickHeight);
 
     // Optional: add numeric label every second tick
-    if (i == 0 || i == tickCount || i % 3 == 0)
+    if (i == 0 || i == tickCount || i % 2 == 0)
     {
       double tickValue = minValue + (range * i / tickCount);
       display.setFont(ArialMT_Plain_10);
@@ -765,7 +769,7 @@ void setup()
             {
   if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
       server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
-      server.hasArg("coolant_gauge_type"))
+      server.hasArg("coolant_gauge_type") && server.hasArg("tick_line_gauge"))
   {
     TURBO_MIN_BAR = server.arg("boost_min").toFloat();
     TURBO_MAX_BAR = server.arg("boost_max").toFloat();
@@ -773,6 +777,7 @@ void setup()
     ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
     BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
     COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+    TICK_LINE_GAUGE = server.arg("tick_line_gauge").toInt();
     saveValues();
     server.send(200, "text/html",
                 "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
