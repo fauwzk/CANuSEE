@@ -15,7 +15,7 @@ const char *ssid = "CANuSEE_Config";
 WebServer server(80);
 
 // ==== EEPROM Setup ====
-#define EEPROM_SIZE 6
+#define EEPROM_SIZE 7
 #define EEPROM_LAST_SCREEN 0
 
 // ==== EEPROM Addresses ====
