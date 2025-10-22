@@ -15,12 +15,21 @@ const char *ssid = "CANuSEE_Config";
 WebServer server(80);
 
 // ==== EEPROM Setup ====
-#define EEPROM_SIZE 4
+#define EEPROM_SIZE 6
 #define EEPROM_LAST_SCREEN 0
+
+// ==== EEPROM Addresses ====
 #define EEPROM_BOOST_SCREEN_TYPE 1
 #define EEPROM_TURBO_MIN_ADDR 2
 #define EEPROM_TURBO_MAX_ADDR 3
 #define EEPROM_ENGLOAD_SCREEN_TYPE 4
+#define EEPROM_BATTERY_SCREEN_TYPE 5
+#define EEPROM_COOLANT_SCREEN_TYPE 6
+
+uint8_t BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
+uint8_t ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
+uint8_t BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
+uint8_t COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -47,8 +56,7 @@ const int centerY = 55;
 // ==== Screen control ====
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
-uint8_t BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
-uint8_t ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
+
 uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
@@ -116,6 +124,8 @@ void saveValues()
   EEPROM.put(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
   EEPROM.put(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
   EEPROM.put(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
+  EEPROM.put(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
+  EEPROM.put(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
   EEPROM.commit();
 }
 
@@ -125,6 +135,8 @@ void loadValues()
   EEPROM.get(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
   EEPROM.get(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
   EEPROM.get(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
+  EEPROM.get(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
+  EEPROM.get(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
   // Default if uninitialized or invalid
   if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
   {
@@ -365,7 +377,7 @@ void draw_EngLoadScreens()
   }
 }
 
-void draw_BatteryVoltageScreen()
+void draw_BatteryVoltageTextScreen()
 {
   battery_voltage = myELM327.batteryVoltage();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
@@ -375,7 +387,29 @@ void draw_BatteryVoltageScreen()
   draw_InfoText("Tension Bat", batteryVoltage, "V");
 }
 
-void draw_CoolantTempScreen()
+void draw_BatteryVoltageGaugeScreen()
+{
+  battery_voltage = myELM327.batteryVoltage();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    batteryVoltage = battery_voltage - 2.0; // Adjust for alternator voltage drop
+  }
+  draw_LineGauge(batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
+}
+
+void draw_BatteryVoltageScreens()
+{
+  if (BATTERY_SCREEN == 0)
+  {
+    draw_BatteryVoltageTextScreen();
+  }
+  else
+  {
+    draw_BatteryVoltageGaugeScreen();
+  }
+}
+
+void draw_CoolantTempTextScreen()
 {
   coolant_temp = myELM327.engineCoolantTemp();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
@@ -383,6 +417,28 @@ void draw_CoolantTempScreen()
     coolantTemp = coolant_temp;
   }
   draw_InfoText("Temp LdR", coolantTemp, "°C");
+}
+
+void draw_CoolantTempGaugeScreen()
+{
+  coolant_temp = myELM327.engineCoolantTemp();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    coolantTemp = coolant_temp;
+  }
+  draw_LineGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
+}
+
+void draw_CoolantTempScreens()
+{
+  if (COOLANT_SCREEN == 0)
+  {
+    draw_CoolantTempTextScreen();
+  }
+  else
+  {
+    draw_CoolantTempGaugeScreen();
+  }
 }
 
 void draw_TurboPressureLineScreen()
@@ -518,10 +574,10 @@ void draw_GaugeScreen(uint8_t index)
     draw_EngLoadScreens();
     break;
   case 4:
-    draw_BatteryVoltageScreen();
+    draw_BatteryVoltageScreens();
     break;
   case 5:
-    draw_CoolantTempScreen();
+    draw_CoolantTempScreens();
     break;
   case 6:
     draw_dtcCodes();
@@ -782,6 +838,24 @@ void loop()
       {
         ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
         EEPROM.write(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
+        EEPROM.commit();
+        display.display();
+        delay(1000);
+        longPressHandled = true;
+      }
+      else if (screenIndex == 4)
+      {
+        BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
+        EEPROM.write(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
+        EEPROM.commit();
+        display.display();
+        delay(1000);
+        longPressHandled = true;
+      }
+      else if (screenIndex == 5)
+      {
+        COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
+        EEPROM.write(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
         EEPROM.commit();
         display.display();
         delay(1000);
