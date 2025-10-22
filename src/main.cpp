@@ -192,7 +192,7 @@ void draw_InfoText(String title, double value, String unit)
   display.display();
 }
 
-// ==== Draw line gauge ====
+// ==== Draw line gauge with graduations ====
 // Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
 {
@@ -213,28 +213,39 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
   double fillPercent = (value - minValue) / range;
   int fillWidth = (int)(barWidth * fillPercent);
 
-  // Draw outline
+  // ==== Draw bar outline ====
   display.drawRect(barX, barY, barWidth, barHeight);
 
-  // Draw fill (grows with pressure)
+  // ==== Draw fill ====
   display.fillRect(barX, barY, fillWidth, barHeight);
 
-  // Draw min and max labels
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(barX, barY + barHeight + 2, String(minValue));
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(barX + barWidth, barY + barHeight + 2, String(maxValue));
+  // ==== Draw graduations ====
+  int tickCount = 5; // number of intermediate marks (between min and max)
+  int tickHeight = 4;
+  int labelOffsetY = barY + barHeight + 8;
 
-  // Draw label and value
+  for (int i = 0; i <= tickCount; i++)
+  {
+    int tickX = barX + (barWidth * i) / tickCount;
+    display.drawLine(tickX, barY + barHeight, tickX, barY + barHeight + tickHeight);
+
+    // Optional: add numeric label every second tick
+    if (i == 0 || i == tickCount || i % 2 == 0)
+    {
+      double tickValue = minValue + (range * i / tickCount);
+      display.setFont(ArialMT_Plain_10);
+      display.setTextAlignment(TEXT_ALIGN_CENTER);
+      display.drawString(tickX, labelOffsetY, String(tickValue, 1));
+    }
+  }
+
+  // ==== Draw label and current value ====
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_10);
   display.drawString(centerX, 0, label);
+  display.drawString(centerX, barY + barHeight + 20, String(value, 2) + " " + unit);
 
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(centerX, barY + barHeight + 10, String(value) + " " + unit);
-
-  // Optional extra info
+  // ==== Optional bottom info ====
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
 }
@@ -337,7 +348,19 @@ void draw_CoolantTempScreen()
   draw_InfoText("Temp LdR", coolantTemp, "°C");
 }
 
-void draw_TurboPressureScreen()
+void draw_TurboPressureLineScreen()
+{
+  turbo_pressure = myELM327.manifoldPressure();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    turbo_pressure = turbo_pressure - 100;  // Gauge pressure = absolute - atmospheric
+    turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
+    turboPressure = turbo_pressure;
+  }
+  draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
+}
+
+void draw_TurboPressureTextScreen()
 { // Turbo pressure calculation:
   turbo_pressure = myELM327.manifoldPressure();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
@@ -346,15 +369,7 @@ void draw_TurboPressureScreen()
     turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
     turboPressure = turbo_pressure;
   }
-  if (boostScreenType == 1)
-  {
-    draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
-    return;
-  }
-  else
-  {
-    draw_InfoText("Pression Turbo", turboPressure, "Bar");
-  }
+  draw_InfoText("Pression Turbo", turboPressure, "Bar");
 }
 
 void draw_dtcCodes()
@@ -445,8 +460,14 @@ void draw_GaugeScreen(uint8_t index)
     draw_MAFScreen();
     break;
   case 1:
-    draw_TurboPressureScreen();
-    break;
+    if (boostScreenType == 0)
+    {
+      draw_TurboPressureTextScreen();
+    }
+    else
+    {
+      draw_TurboPressureLineScreen();
+    }
   case 2:
     draw_IntakeTempScreen();
     break;
