@@ -5,7 +5,7 @@
 #include <SSD1306Wire.h>
 
 // ==== EEPROM Setup ====
-#define EEPROM_SIZE 1
+#define EEPROM_SIZE 2
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -35,6 +35,8 @@ const int maxAngle = 120;
 // ==== Screen control ====
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
+uint8_t boostScreenType = 0; // 0 = text, 1 = gauge
+uint8_t boostScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
 
@@ -135,6 +137,55 @@ void draw_InfoText(String title, double value, String unit)
   display.display();
 }
 
+// ==== Draw line gauge ====
+// Draws a semi-circular gauge (like a speedometer)
+void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
+{
+  // Clamp value to range
+  if (value < minValue)
+    value = minValue;
+  if (value > maxValue)
+    value = maxValue;
+
+  // Calculate angle range and needle angle
+  double range = maxValue - minValue;
+  double angleRange = maxAngle - minAngle;
+  double angle = minAngle + ((value - minValue) / range) * angleRange;
+
+  // Convert angle to radians
+  double rad = angle * PI / 180.0;
+
+  // Gauge background arc (optional tick marks)
+  for (int a = minAngle; a <= maxAngle; a += 6)
+  {
+    double arad = a * PI / 180.0;
+    int x1 = centerX + cos(arad) * (radius - 4);
+    int y1 = centerY + sin(arad) * (radius - 4);
+    int x2 = centerX + cos(arad) * (radius);
+    int y2 = centerY + sin(arad) * (radius);
+    display.drawLine(x1, y1, x2, y2);
+  }
+
+  // Draw the needle
+  int needleX = centerX + cos(rad) * (radius - 5);
+  int needleY = centerY + sin(rad) * (radius - 5);
+  display.drawLine(centerX, centerY, needleX, needleY);
+
+  // Draw the center point
+  display.fillCircle(centerX, centerY, 2);
+
+  // Draw text
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(centerX, 0, label);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(centerX, 20, String(value, 1) + " " + unit);
+
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+}
+
+// ==== Get Atmospheric Pressure ====
 void get_AtmosphericPressure()
 {
   if (0 == 1)
@@ -220,7 +271,15 @@ void draw_TurboPressureScreen()
     turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
     turboPressure = turbo_pressure;
   }
-  draw_InfoText("Pression Turbo", turboPressure, "Bar");
+  if (boostScreenType == 1)
+  {
+    draw_LineGauge(turboPressure, 0.0, 2.0, "Pression Turbo", "Bar");
+    return;
+  }
+  else
+  {
+    draw_InfoText("Pression Turbo", turboPressure, "Bar");
+  }
 }
 
 void draw_dtcCodes()
@@ -412,6 +471,15 @@ void setup()
   display.display();
   delay(1000);
 
+  boostScreenType = EEPROM.read(1);
+  if (boostScreenType > boostScreenTypes - 1)
+  {
+    boostScreenType = 0; // Reset to 0 if out of bounds
+  }
+  draw_BottomText("Boost screen type: " + String(boostScreenType));
+  display.display();
+  delay(1000);
+
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("CANuSEE", true))
   { // true = master mode
@@ -513,7 +581,18 @@ void loop()
   {
     if (millis() - buttonPressTime > longPressDuration)
     {
-      if (screenIndex == 6)
+      if (screenIndex == 1)
+      {
+        // ==== LONG PRESS ACTION ====
+        boostScreenType = (boostScreenType + 1) % boostScreenTypes;
+        EEPROM.write(1, boostScreenType);
+        EEPROM.commit();
+        displayInfo("Boost screen type:\n" + String(boostScreenType));
+        display.display();
+        delay(1000);
+        longPressHandled = true;
+      }
+      else if (screenIndex == 6)
       {
         // If on DTC screen, reset DTC codes
         myELM327.resetDTC();
@@ -532,7 +611,6 @@ void loop()
         display.display();
         delay(1000);
         restart_ESP();
-
         longPressHandled = true;
       }
     }
