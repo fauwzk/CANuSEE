@@ -202,11 +202,12 @@ void draw_InfoText(String title, double value, String unit)
 // Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
 {
+  int barValue = value;
   // Clamp value
-  if (value < minValue)
-    value = minValue;
-  if (value > maxValue)
-    value = maxValue;
+  if (barValue < minValue)
+    barValue = minValue;
+  if (barValue > maxValue)
+    barValue = maxValue;
 
   // Layout parameters
   int barX = 14;      // left position
@@ -216,7 +217,7 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
 
   // Calculate fill width
   double range = maxValue - minValue;
-  double fillPercent = (value - minValue) / range;
+  double fillPercent = (barValue - minValue) / range;
   int fillWidth = (int)(barWidth * fillPercent);
 
   // ==== Draw bar outline ====
