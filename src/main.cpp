@@ -14,8 +14,8 @@ WebServer server(80);
 
 // ==== EEPROM Setup ====
 #define EEPROM_SIZE 4
-#define EEPROM_DEBUG_ADDR 0
-#define EEPROM_SCREEN_ADDR 1
+#define EEPROM_LAST_SCREEN 0
+#define EEPROM_BOOST_SCREEN_TYPE 1
 #define EEPROM_TURBO_MIN_ADDR 2
 #define EEPROM_TURBO_MAX_ADDR 3
 
@@ -537,7 +537,7 @@ void setup()
   delay(500);
 
   // Read the last screen index from EEPROM
-  screenIndex = EEPROM.read(0);
+  screenIndex = EEPROM.read(EEPROM_LAST_SCREEN);
   if (screenIndex >= screenNumbers)
   {
     screenIndex = 0; // Reset to 0 if out of bounds
@@ -546,7 +546,7 @@ void setup()
   display.display();
   delay(1000);
 
-  boostScreenType = EEPROM.read(1);
+  boostScreenType = EEPROM.read(EEPROM_BOOST_SCREEN_TYPE);
   if (boostScreenType > boostScreenTypes - 1)
   {
     boostScreenType = 0; // Reset to 0 if out of bounds
@@ -682,7 +682,7 @@ void loop()
       // Transition vers l’écran suivant une fois les données prêtes
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
-      EEPROM.write(0, screenIndex);
+      EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
       EEPROM.commit();
       lastSwitch = millis();
     }
@@ -697,9 +697,8 @@ void loop()
       {
         // ==== LONG PRESS ACTION ====
         boostScreenType = (boostScreenType + 1) % boostScreenTypes;
-        EEPROM.write(1, boostScreenType);
+        EEPROM.write(EEPROM_BOOST_SCREEN_TYPE, boostScreenType);
         EEPROM.commit();
-        displayInfo("Boost screen type:\n" + String(boostScreenType));
         display.display();
         delay(1000);
         longPressHandled = true;
