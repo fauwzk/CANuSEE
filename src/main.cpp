@@ -112,9 +112,14 @@ String generateWebPage()
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version);
-  html.replace("%SELECTED_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
-
+  html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_VOLTAGE_TEXT%", (BATTERY_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_TEMP_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_TEMP_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
   return html;
 }
 
@@ -762,12 +767,13 @@ void setup()
   {
     TURBO_MIN_BAR = server.arg("min").toFloat();
     TURBO_MAX_BAR = server.arg("max").toFloat();
-    BOOST_SCREEN = server.arg("gauge_type").toInt();
+    BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
+    ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
+    BATTERY_SCREEN = server.arg("battery_gauge_type").toInt();
+    COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
     saveValues();
     server.send(200, "text/html",
                 "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
-    displayInfo("Saved boost:\n" + String(TURBO_MIN_BAR) + " to " + String(TURBO_MAX_BAR));
-    display.display();
   }
   else
   {

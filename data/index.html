@@ -59,10 +59,28 @@
         <form action="/save" method="post">
             <p>Min Boost (bar): <input type="number" step="0.01" name="min" value="%MIN%"></p>
             <p>Max Boost (bar): <input type="number" step="0.01" name="max" value="%MAX%"></p>
-            <p>Gauge type:
-                <select name="gauge_type">
-                    <option value="0" %SELECTED_TEXT%>Text</option>
-                    <option value="1" %SELECTED_GAUGE%>Gauge</option>
+            <p>Boost Gauge type:
+                <select name="boost_gauge_type">
+                    <option value="0" %SELECTED_BOOST_TEXT%>Text</option>
+                    <option value="1" %SELECTED_BOOST_GAUGE%>Gauge</option>
+                </select>
+            </p>
+            <p>Load Gauge type:
+                <select name="load_gauge_type">
+                    <option value="0" %SELECTED_LOAD_TEXT%>Text</option>
+                    <option value="1" %SELECTED_LOAD_GAUGE%>Gauge</option>
+                </select>
+            </p>
+            <p>Voltage Gauge type:
+                <select name="voltage_gauge_type">
+                    <option value="0" %SELECTED_VOLTAGE_TEXT%>Text</option>
+                    <option value="1" %SELECTED_VOLTAGE_GAUGE%>Gauge</option>
+                </select>
+            </p>
+            <p>Temp Gauge type:
+                <select name="temp_gauge_type">
+                    <option value="0" %SELECTED_TEMP_TEXT%>Text</option>
+                    <option value="1" %SELECTED_TEMP_GAUGE%>Gauge</option>
                 </select>
             </p>
             <button type="submit">💾 Save</button>
