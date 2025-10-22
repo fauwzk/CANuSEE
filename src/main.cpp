@@ -25,7 +25,7 @@ WebServer server(80);
 bool debug = false;
 
 // ==== Version ====
-String version = "v0.5";
+String version = "v0.7";
 String version_string = "CANuSEE " + version;
 
 // ==== OLED ====
@@ -47,11 +47,11 @@ const int centerY = 55;
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
 uint8_t BOOST_SCREEN = 0; // 0 = text, 1 = gauge
-uint8_t boostScreenTypes = 2;
+uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
 
-// ==== Turbo gauge limits ====
+// ==== Default Turbo gauge limits ====
 float TURBO_MIN_BAR = -0.4;
 float TURBO_MAX_BAR = 1.6;
 
@@ -116,11 +116,11 @@ void saveTurbo()
   EEPROM.commit();
 }
 
-void loadTurboLimits()
+void loadTurbo()
 {
   EEPROM.get(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
   EEPROM.get(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
-
+  EEPROM.get(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
   // Default if uninitialized or invalid
   if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
   {
@@ -223,16 +223,24 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
 
   // ==== Draw graduations ====
   int tickCount = 5; // number of intermediate marks (between min and max)
-  int tickHeight = 4;
-  int labelOffsetY = barY + barHeight + 8;
+  int tickHeight = 2;
+  int labelOffsetY = barY + barHeight + 2;
 
   for (int i = 0; i <= tickCount; i++)
   {
-    int tickX = barX + (barWidth * i) / tickCount;
+    int tickX;
+    if (i == 0)
+    {
+      tickX = (barX + (barWidth * i) / tickCount);
+    }
+    else
+    {
+      tickX = (barX + (barWidth * i) / tickCount) - 1; // -1 to center the tick
+    }
     display.drawLine(tickX, barY + barHeight, tickX, barY + barHeight + tickHeight);
 
     // Optional: add numeric label every second tick
-    if (i == 0 || i == tickCount || i % 2 == 0)
+    if (i == 0 || i == tickCount || i % 3 == 0)
     {
       double tickValue = minValue + (range * i / tickCount);
       display.setFont(ArialMT_Plain_10);
@@ -245,7 +253,7 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_10);
   display.drawString(centerX, 0, label);
-  display.drawString(centerX, barY + barHeight + 20, String(value, 2) + " " + unit);
+  display.drawString(centerX, labelOffsetY + 10, String(value) + " " + unit);
 
   // ==== Optional bottom info ====
   draw_BottomText(version_string);
@@ -374,6 +382,18 @@ void draw_TurboPressureTextScreen()
   draw_InfoText("Pression Turbo", turboPressure, "Bar");
 }
 
+void draw_BoostScreens()
+{
+  if (BOOST_SCREEN == 0)
+  {
+    draw_TurboPressureTextScreen();
+  }
+  else
+  {
+    draw_TurboPressureLineScreen();
+  }
+}
+
 void draw_dtcCodes()
 {
   myELM327.currentDTCCodes(true);
@@ -462,14 +482,8 @@ void draw_GaugeScreen(uint8_t index)
     draw_MAFScreen();
     break;
   case 1:
-    if (BOOST_SCREEN == 0)
-    {
-      draw_TurboPressureTextScreen();
-    }
-    else
-    {
-      draw_TurboPressureLineScreen();
-    }
+    draw_BoostScreens();
+    break;
   case 2:
     draw_IntakeTempScreen();
     break;
@@ -542,8 +556,8 @@ void setup()
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_16);
-  display.drawString(4, 0, "Fauwzk"); // Top left
-  display.drawString(32, 16, "Engineering");
+  display.drawString(4, 8, "Fauwzk"); // Top left
+  display.drawString(32, 24, "Engineering");
   draw_BottomText(version_string);
   display.display();
   delay(1000);
@@ -583,13 +597,10 @@ void setup()
   delay(1000);
 
   BOOST_SCREEN = EEPROM.read(EEPROM_BOOST_SCREEN_TYPE);
-  if (BOOST_SCREEN > boostScreenTypes - 1)
+  if (BOOST_SCREEN > ScreenTypes - 1)
   {
     BOOST_SCREEN = 0; // Reset to 0 if out of bounds
   }
-  draw_BottomText("Boost screen type: " + String(BOOST_SCREEN));
-  display.display();
-  delay(1000);
 
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("CANuSEE", true))
@@ -647,7 +658,7 @@ void setup()
   display.normalDisplay();
 
   // ==== Load Turbo Limits from EEPROM ====
-  loadTurboLimits();
+  loadTurbo();
 
   // ==== WiFi Access Point Setup ====
   WiFi.softAP(ssid, NULL);
@@ -664,7 +675,7 @@ void setup()
 
   server.on("/save", HTTP_POST, []()
             {
-  if (server.hasArg("min") && server.hasArg("max"))
+  if (server.hasArg("min") && server.hasArg("max") && server.hasArg("gauge_type"))
   {
     TURBO_MIN_BAR = server.arg("min").toFloat();
     TURBO_MAX_BAR = server.arg("max").toFloat();
@@ -733,7 +744,7 @@ void loop()
       if (screenIndex == 1)
       {
         // ==== LONG PRESS ACTION ====
-        BOOST_SCREEN = (BOOST_SCREEN + 1) % boostScreenTypes;
+        BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
         EEPROM.write(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
         EEPROM.commit();
         display.display();
