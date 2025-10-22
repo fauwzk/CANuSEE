@@ -46,7 +46,7 @@ const int centerY = 55;
 // ==== Screen control ====
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
-uint8_t boostScreenType = 0; // 0 = text, 1 = gauge
+uint8_t BOOST_SCREEN = 0; // 0 = text, 1 = gauge
 uint8_t boostScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
@@ -102,16 +102,17 @@ String generateWebPage()
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version);
-  html.replace("%SELECTED_TEXT%", (boostScreenType == 0) ? "selected" : "");
-  html.replace("%SELECTED_GAUGE%", (boostScreenType == 1) ? "selected" : "");
+  html.replace("%SELECTED_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
+  html.replace("%SELECTED_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
 
   return html;
 }
 
-void saveTurboLimits()
+void saveTurbo()
 {
   EEPROM.put(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
   EEPROM.put(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
+  EEPROM.put(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
   EEPROM.commit();
 }
 
@@ -125,7 +126,7 @@ void loadTurboLimits()
   {
     TURBO_MIN_BAR = -0.4;
     TURBO_MAX_BAR = 1.6;
-    saveTurboLimits();
+    saveTurbo();
   }
 }
 
@@ -461,7 +462,7 @@ void draw_GaugeScreen(uint8_t index)
     draw_MAFScreen();
     break;
   case 1:
-    if (boostScreenType == 0)
+    if (BOOST_SCREEN == 0)
     {
       draw_TurboPressureTextScreen();
     }
@@ -581,12 +582,12 @@ void setup()
   display.display();
   delay(1000);
 
-  boostScreenType = EEPROM.read(EEPROM_BOOST_SCREEN_TYPE);
-  if (boostScreenType > boostScreenTypes - 1)
+  BOOST_SCREEN = EEPROM.read(EEPROM_BOOST_SCREEN_TYPE);
+  if (BOOST_SCREEN > boostScreenTypes - 1)
   {
-    boostScreenType = 0; // Reset to 0 if out of bounds
+    BOOST_SCREEN = 0; // Reset to 0 if out of bounds
   }
-  draw_BottomText("Boost screen type: " + String(boostScreenType));
+  draw_BottomText("Boost screen type: " + String(BOOST_SCREEN));
   display.display();
   delay(1000);
 
@@ -667,9 +668,10 @@ void setup()
   {
     TURBO_MIN_BAR = server.arg("min").toFloat();
     TURBO_MAX_BAR = server.arg("max").toFloat();
-    saveTurboLimits();
+    BOOST_SCREEN = server.arg("gauge_type").toInt();
+    saveTurbo();
     server.send(200, "text/html",
-                "<html><body><h3>✅ Saved!</h3><a href='/'>Back</a></body></html>");
+                "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
     displayInfo("Saved boost:\n" + String(TURBO_MIN_BAR) + " to " + String(TURBO_MAX_BAR));
     display.display();
   }
@@ -731,8 +733,8 @@ void loop()
       if (screenIndex == 1)
       {
         // ==== LONG PRESS ACTION ====
-        boostScreenType = (boostScreenType + 1) % boostScreenTypes;
-        EEPROM.write(EEPROM_BOOST_SCREEN_TYPE, boostScreenType);
+        BOOST_SCREEN = (BOOST_SCREEN + 1) % boostScreenTypes;
+        EEPROM.write(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
         EEPROM.commit();
         display.display();
         delay(1000);
