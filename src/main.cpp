@@ -5,6 +5,8 @@
 #include <SSD1306Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <LittleFS.h>
+#include <FS.h>
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -87,23 +89,22 @@ double turboPressure = 0.0;
 
 String generateWebPage()
 {
-  String html = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
-  html += "<title>CANuSEE Boost Config</title>";
-  html += "<style>";
-  html += "body{font-family:Arial;text-align:center;margin-top:40px;background:#111;color:#fff;}";
-  html += "input{padding:8px;margin:5px;font-size:16px;width:80px;text-align:center;}";
-  html += "button{padding:10px 20px;margin-top:10px;font-size:16px;cursor:pointer;}";
-  html += ".container{background:#222;display:inline-block;padding:20px;border-radius:10px;box-shadow:0 0 10px #444;}";
-  html += "</style></head><body>";
-  html += "<div class='container'>";
-  html += "<h2>Boost Gauge Configuration</h2>";
-  html += "<form action='/save' method='post'>";
-  html += "<p>Min Boost (bar): <input type='number' step='0.1' name='min' value='" + String(TURBO_MIN_BAR) + "'></p>";
-  html += "<p>Max Boost (bar): <input type='number' step='0.1' name='max' value='" + String(TURBO_MAX_BAR) + "'></p>";
-  html += "<button type='submit'>💾 Save</button>";
-  html += "</form>";
-  html += "<p style='margin-top:15px;font-size:12px;'>CANuSEE " + version + "</p>";
-  html += "</div></body></html>";
+  File file = LittleFS.open("/index.html", "r");
+  if (!file)
+  {
+    return "<html><body><h3>File not found</h3></body></html>";
+  }
+
+  String html = file.readString();
+  file.close();
+
+  // Replace placeholders
+  html.replace("%MIN%", String(TURBO_MIN_BAR));
+  html.replace("%MAX%", String(TURBO_MAX_BAR));
+  html.replace("%VERSION%", version);
+  html.replace("%SELECTED_TEXT%", (boostScreenType == 0) ? "selected" : "");
+  html.replace("%SELECTED_GAUGE%", (boostScreenType == 1) ? "selected" : "");
+
   return html;
 }
 
@@ -555,6 +556,19 @@ void setup()
   EEPROM.begin(EEPROM_SIZE);
   draw_BottomText("EEPROM Init done");
   display.display();
+  delay(500);
+
+  draw_BottomText("Mounting FS...");
+  display.display();
+  if (!LittleFS.begin())
+  {
+    Serial.println("LittleFS mount failed!");
+    displayInfo("FS Error!");
+    restart_ESP();
+  }
+  draw_BottomText("FS mounted");
+  display.display();
+  Serial.println("LittleFS mounted successfully");
   delay(500);
 
   // Read the last screen index from EEPROM
