@@ -20,6 +20,7 @@ WebServer server(80);
 #define EEPROM_BOOST_SCREEN_TYPE 1
 #define EEPROM_TURBO_MIN_ADDR 2
 #define EEPROM_TURBO_MAX_ADDR 3
+#define EEPROM_ENGLOAD_SCREEN_TYPE 4
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -46,7 +47,8 @@ const int centerY = 55;
 // ==== Screen control ====
 const int screenNumbers = 7;
 uint8_t screenIndex = 0;
-uint8_t BOOST_SCREEN = 0; // 0 = text, 1 = gauge
+uint8_t BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
+uint8_t ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
 uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
@@ -108,25 +110,27 @@ String generateWebPage()
   return html;
 }
 
-void saveTurbo()
+void saveValues()
 {
   EEPROM.put(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
   EEPROM.put(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
   EEPROM.put(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
+  EEPROM.put(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
   EEPROM.commit();
 }
 
-void loadTurbo()
+void loadValues()
 {
   EEPROM.get(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
   EEPROM.get(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
   EEPROM.get(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
+  EEPROM.get(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
   // Default if uninitialized or invalid
   if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
   {
     TURBO_MIN_BAR = -0.4;
     TURBO_MAX_BAR = 1.6;
-    saveTurbo();
+    saveValues();
   }
 }
 
@@ -328,7 +332,7 @@ void draw_IntakeTempScreen()
   draw_InfoText("Temp admission", intakeTemp, "°C");
 }
 
-void draw_EngineLoadScreen()
+void draw_EngineLoadTextScreen()
 {
   engine_load = myELM327.engineLoad();
   if (myELM327.nb_rx_state == ELM_SUCCESS)
@@ -336,6 +340,28 @@ void draw_EngineLoadScreen()
     engineLoad = engine_load;
   }
   draw_InfoText("Charge moteur", engineLoad, "%");
+}
+
+void draw_EngineLoadGaugeScreen()
+{
+  engine_load = myELM327.engineLoad();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    engineLoad = engine_load;
+  }
+  draw_LineGauge(engineLoad, 0, 100, "Charge moteur", "%");
+}
+
+void draw_EngLoadScreens()
+{
+  if (ENGLOAD_SCREEN == 0)
+  {
+    draw_EngineLoadTextScreen();
+  }
+  else
+  {
+    draw_EngineLoadGaugeScreen();
+  }
 }
 
 void draw_BatteryVoltageScreen()
@@ -488,7 +514,7 @@ void draw_GaugeScreen(uint8_t index)
     draw_IntakeTempScreen();
     break;
   case 3:
-    draw_EngineLoadScreen();
+    draw_EngLoadScreens();
     break;
   case 4:
     draw_BatteryVoltageScreen();
@@ -658,7 +684,7 @@ void setup()
   display.normalDisplay();
 
   // ==== Load Turbo Limits from EEPROM ====
-  loadTurbo();
+  loadValues();
 
   // ==== WiFi Access Point Setup ====
   WiFi.softAP(ssid, NULL);
@@ -680,7 +706,7 @@ void setup()
     TURBO_MIN_BAR = server.arg("min").toFloat();
     TURBO_MAX_BAR = server.arg("max").toFloat();
     BOOST_SCREEN = server.arg("gauge_type").toInt();
-    saveTurbo();
+    saveValues();
     server.send(200, "text/html",
                 "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
     displayInfo("Saved boost:\n" + String(TURBO_MIN_BAR) + " to " + String(TURBO_MAX_BAR));
@@ -751,6 +777,16 @@ void loop()
         delay(1000);
         longPressHandled = true;
       }
+      else if (screenIndex == 3)
+      {
+        ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
+        EEPROM.write(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
+        EEPROM.commit();
+        display.display();
+        delay(1000);
+        longPressHandled = true;
+      }
+
       else if (screenIndex == 6)
       {
         resetDTCs();
