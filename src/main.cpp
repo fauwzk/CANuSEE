@@ -3,9 +3,21 @@
 #include "BluetoothSerial.h"
 #include "ELMduino.h"
 #include <SSD1306Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
+
+// ==== WiFi Config ====
+const char *ssid = "CANuSEE_Config";
+
+// ==== Web Server ====
+WebServer server(80);
 
 // ==== EEPROM Setup ====
-#define EEPROM_SIZE 2
+#define EEPROM_SIZE 4
+#define EEPROM_DEBUG_ADDR 0
+#define EEPROM_SCREEN_ADDR 1
+#define EEPROM_TURBO_MIN_ADDR 2
+#define EEPROM_TURBO_MAX_ADDR 3
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -25,12 +37,9 @@ BluetoothSerial SerialBT;
 ELM327 myELM327;
 uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 
-// ==== Gauge setup ====
+// ==== Display center coordinates ====
 const int centerX = 64;
 const int centerY = 55;
-const int radius = 28;
-const int minAngle = -120;
-const int maxAngle = 120;
 
 // ==== Screen control ====
 const int screenNumbers = 7;
@@ -40,12 +49,15 @@ uint8_t boostScreenTypes = 2;
 unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
 
-const unsigned long longPressDuration = 2000; // 2 seconds for long press
+// ==== Turbo gauge limits ====
+float TURBO_MIN_BAR = -0.4;
+float TURBO_MAX_BAR = 1.6;
 
 // ==== Debounce ====
 #define BUTTON_PIN 32
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 300;
+const unsigned long longPressDuration = 2000; // 2 seconds for long press
 
 // ==== Bluetooth setup ====
 #define BT_DISCOVER_TIME 500000
@@ -72,6 +84,49 @@ double batteryVoltage = 0.0;
 double fuelLevel = 0.0;
 double oilTemp = 0.0;
 double turboPressure = 0.0;
+
+String generateWebPage()
+{
+  String html = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
+  html += "<title>CANuSEE Boost Config</title>";
+  html += "<style>";
+  html += "body{font-family:Arial;text-align:center;margin-top:40px;background:#111;color:#fff;}";
+  html += "input{padding:8px;margin:5px;font-size:16px;width:80px;text-align:center;}";
+  html += "button{padding:10px 20px;margin-top:10px;font-size:16px;cursor:pointer;}";
+  html += ".container{background:#222;display:inline-block;padding:20px;border-radius:10px;box-shadow:0 0 10px #444;}";
+  html += "</style></head><body>";
+  html += "<div class='container'>";
+  html += "<h2>Boost Gauge Configuration</h2>";
+  html += "<form action='/save' method='post'>";
+  html += "<p>Min Boost (bar): <input type='number' step='0.1' name='min' value='" + String(TURBO_MIN_BAR) + "'></p>";
+  html += "<p>Max Boost (bar): <input type='number' step='0.1' name='max' value='" + String(TURBO_MAX_BAR) + "'></p>";
+  html += "<button type='submit'>💾 Save</button>";
+  html += "</form>";
+  html += "<p style='margin-top:15px;font-size:12px;'>CANuSEE " + version + "</p>";
+  html += "</div></body></html>";
+  return html;
+}
+
+void saveTurboLimits()
+{
+  EEPROM.put(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
+  EEPROM.put(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
+  EEPROM.commit();
+}
+
+void loadTurboLimits()
+{
+  EEPROM.get(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
+  EEPROM.get(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
+
+  // Default if uninitialized or invalid
+  if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
+  {
+    TURBO_MIN_BAR = -0.4;
+    TURBO_MAX_BAR = 1.6;
+    saveTurboLimits();
+  }
+}
 
 // ==== Restart ESP ====
 void restart_ESP()
@@ -184,6 +239,27 @@ void draw_LineGauge(double value, double minValue, double maxValue, String label
   draw_ScreenNumber(screenIndex);
 }
 
+void resetDTCs()
+{
+  displayInfo("Resetting DTCs...");
+  myELM327.resetDTC();
+  while (myELM327.nb_rx_state != ELM_SUCCESS)
+  {
+    displayInfo("Resetting DTCs...");
+    display.display();
+  }
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    displayInfo("DTCs Reset!");
+    delay(1000);
+  }
+  else
+  {
+    displayInfo("DTC Reset Failed!");
+    delay(1000);
+  }
+}
+
 // ==== Get Atmospheric Pressure ====
 void get_AtmosphericPressure()
 {
@@ -272,7 +348,7 @@ void draw_TurboPressureScreen()
   }
   if (boostScreenType == 1)
   {
-    draw_LineGauge(turboPressure, -0.4, 1.6, "Pression Turbo", "Bar");
+    draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
     return;
   }
   else
@@ -533,11 +609,48 @@ void setup()
   display.display();
   delay(750);
   display.normalDisplay();
+
+  // ==== Load Turbo Limits from EEPROM ====
+  loadTurboLimits();
+
+  // ==== WiFi Access Point Setup ====
+  WiFi.softAP(ssid, NULL);
+  Serial.println("WiFi AP started");
+  Serial.print("IP: ");
+  Serial.println(WiFi.softAPIP());
+  displayInfo("WiFi: " + WiFi.softAPIP().toString());
+  display.display();
+  delay(1000);
+
+  // ==== Web Server Routes ====
+  server.on("/", HTTP_GET, []()
+            { server.send(200, "text/html", generateWebPage()); });
+
+  server.on("/save", HTTP_POST, []()
+            {
+  if (server.hasArg("min") && server.hasArg("max"))
+  {
+    TURBO_MIN_BAR = server.arg("min").toFloat();
+    TURBO_MAX_BAR = server.arg("max").toFloat();
+    saveTurboLimits();
+    server.send(200, "text/html",
+                "<html><body><h3>✅ Saved!</h3><a href='/'>Back</a></body></html>");
+    displayInfo("Saved boost:\n" + String(TURBO_MIN_BAR) + " to " + String(TURBO_MAX_BAR));
+    display.display();
+  }
+  else
+  {
+    server.send(400, "text/plain", "Missing parameters");
+  } });
+
+  server.begin();
+  Serial.println("Web server started");
 }
 
 // ==== Main loop ====
 void loop()
 {
+  server.handleClient();
 
   static bool buttonPressed = false;
   static unsigned long buttonPressTime = 0;
@@ -593,11 +706,8 @@ void loop()
       }
       else if (screenIndex == 6)
       {
+        resetDTCs();
         // If on DTC screen, reset DTC codes
-        myELM327.resetDTC();
-        displayInfo("No more DTC!");
-        display.display();
-        delay(1000);
         longPressHandled = true;
         if (buttonPressed)
         {
@@ -611,7 +721,6 @@ void loop()
         display.display();
         delay(1000);
         restart_ESP();
-        longPressHandled = true;
       }
     }
   }
