@@ -122,7 +122,7 @@ String generateWebPage()
   html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
-  html.replace("%TICKS%", (TICK_LINE_GAUGE == 2) ? "selected" : "");
+  html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   return html;
 }
 
@@ -219,7 +219,89 @@ void draw_InfoText(String title, double value, String unit)
   }
   display.display();
 }
-int barValue;
+
+// ==== Tight & Clear Speedometer Gauge with Values ====
+void draw_SpeedoGauge(double value, double minValue, double maxValue, String label, String unit)
+{
+  const int cx = 64;                       // Center X
+  const int cy = 48;                       // Center Y (fitting screen)
+  const int outerRadius = 38;              // Smaller radius for tighter gauge
+  const int innerRadius = outerRadius - 8; // Thickness
+  const int startAngle = 135;              // Left arc end
+  const int endAngle = 45;                 // Right arc end
+
+  // Clamp value
+  if (value < minValue)
+    value = minValue;
+  if (value > maxValue)
+    value = maxValue;
+
+  // ==== Draw arc outline ====
+  for (int a = startAngle; a >= endAngle; a -= 2) // finer outline
+  {
+    int xo = cx + outerRadius * cos(a * DEG_TO_RAD);
+    int yo = cy - outerRadius * sin(a * DEG_TO_RAD);
+    int xi = cx + innerRadius * cos(a * DEG_TO_RAD);
+    int yi = cy - innerRadius * sin(a * DEG_TO_RAD);
+    display.drawLine(xi, yi, xo, yo);
+  }
+
+  // ==== Tick marks with values ====
+  int tickCount = TICK_LINE_GAUGE;
+  int tickLength = 3;
+  for (int i = 0; i <= tickCount; i++)
+  {
+    double tAngle = startAngle - i * (startAngle - endAngle) / tickCount;
+    int x1 = cx + (outerRadius - 1) * cos(tAngle * DEG_TO_RAD);
+    int y1 = cy - (outerRadius - 1) * sin(tAngle * DEG_TO_RAD);
+    int x2 = cx + (outerRadius - 1 - tickLength) * cos(tAngle * DEG_TO_RAD);
+    int y2 = cy - (outerRadius - 1 - tickLength) * sin(tAngle * DEG_TO_RAD);
+    display.drawLine(x1, y1, x2, y2);
+
+    // Draw numeric labels every second tick (or first/last)
+    if (i == 0 || i == tickCount || i % 2 == 0)
+    {
+      double tickValue = minValue + (maxValue - minValue) * i / tickCount;
+      int labelRadius = outerRadius + 8; // slightly outside the arc
+      int lx = cx + labelRadius * cos(tAngle * DEG_TO_RAD);
+      int ly = cy - labelRadius * sin(tAngle * DEG_TO_RAD);
+      display.setFont(ArialMT_Plain_10);
+      display.setTextAlignment(TEXT_ALIGN_CENTER);
+      display.drawString(lx, ly, String(tickValue, 0));
+    }
+  }
+
+  // ==== Draw needle ====
+  double range = maxValue - minValue;
+  double needleAngle = startAngle - (value - minValue) / range * (startAngle - endAngle);
+  int needleLength = outerRadius - 6;
+  int nx = cx + needleLength * cos(needleAngle * DEG_TO_RAD);
+  int ny = cy - needleLength * sin(needleAngle * DEG_TO_RAD);
+  display.drawLine(cx, cy, nx, ny);
+
+  // ==== Center hub ====
+  for (int r = 0; r < 2; r++)
+  {
+    for (int a = 0; a < 360; a += 15)
+    {
+      int px = cx + r * cos(a * DEG_TO_RAD);
+      int py = cy - r * sin(a * DEG_TO_RAD);
+      display.setPixel(px, py);
+    }
+  }
+
+  // ==== Label & current value ====
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(cx, 0, label); // top label
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(cx, cy + outerRadius + 8, String(value) + " " + unit); // numeric
+
+  // ==== Optional bottom info ====
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+}
+
 // ==== Draw line gauge with graduations ====
 // Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
@@ -839,8 +921,8 @@ void loop()
       myELM327.response = 0;
       delay(100);
       // Transition vers l’écran suivant une fois les données prêtes
-      screenIndex = (screenIndex + 1) % screenNumbers;
       fadeTransition((screenIndex + 1) % screenNumbers);
+      screenIndex = (screenIndex + 1) % screenNumbers;
       EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
       EEPROM.commit();
       lastSwitch = millis();
