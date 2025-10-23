@@ -122,6 +122,7 @@ String generateWebPage()
   html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+  html.replace("%TICKS%", (TICK_LINE_GAUGE == 2) ? "selected" : "");
   return html;
 }
 
@@ -769,7 +770,7 @@ void setup()
             {
   if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
       server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
-      server.hasArg("coolant_gauge_type") && server.hasArg("tick_line_gauge"))
+      server.hasArg("coolant_gauge_type") && server.hasArg("ticks"))
   {
     TURBO_MIN_BAR = server.arg("boost_min").toFloat();
     TURBO_MAX_BAR = server.arg("boost_max").toFloat();
@@ -777,7 +778,7 @@ void setup()
     ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
     BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
     COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
-    TICK_LINE_GAUGE = server.arg("tick_line_gauge").toInt();
+    TICK_LINE_GAUGE = server.arg("ticks").toInt();
     saveValues();
     server.send(200, "text/html",
                 "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
