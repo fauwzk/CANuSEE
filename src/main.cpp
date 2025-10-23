@@ -16,9 +16,9 @@ WebServer server(80);
 
 // ==== EEPROM Setup ====
 #define EEPROM_SIZE 8
-#define EEPROM_LAST_SCREEN 0
 
 // ==== EEPROM Addresses ====
+#define EEPROM_LAST_SCREEN 0
 #define EEPROM_BOOST_SCREEN_TYPE 1
 #define EEPROM_TURBO_MIN_ADDR 2
 #define EEPROM_TURBO_MAX_ADDR 3
