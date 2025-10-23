@@ -786,6 +786,14 @@ void setup()
   {
     server.send(400, "text/plain", "Missing parameters");
   } });
+  server.on("/nextpage", HTTP_GET, []()
+            {
+  screenIndex = (screenIndex + 1) % screenNumbers;
+  fadeTransition((screenIndex + 1) % screenNumbers);
+  EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
+  EEPROM.commit();
+  server.send(200, "text/html",
+              "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
 
   server.begin();
   Serial.println("Web server started");
@@ -824,8 +832,8 @@ void loop()
       myELM327.response = 0;
       delay(100);
       // Transition vers l’écran suivant une fois les données prêtes
-      fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
+      fadeTransition((screenIndex + 1) % screenNumbers);
       EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
       EEPROM.commit();
       lastSwitch = millis();
