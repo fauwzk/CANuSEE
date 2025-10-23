@@ -794,6 +794,12 @@ void setup()
   EEPROM.commit();
   server.send(200, "text/html",
               "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
+  server.on("/reset", HTTP_GET, []()
+            {
+  server.send(200, "text/html",
+              "<html><body><h3>Device Resetting...</h3></body></html>");
+  delay(1000);
+  restart_ESP(); });
 
   server.begin();
   Serial.println("Web server started");
