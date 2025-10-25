@@ -147,13 +147,6 @@ void loadValues()
   EEPROM.get(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
   EEPROM.get(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
   EEPROM.get(EEPROM_TICK_LINE_GAUGE, TICK_LINE_GAUGE);
-  // Default if uninitialized or invalid
-  if (isnan(TURBO_MIN_BAR) || isnan(TURBO_MAX_BAR) || TURBO_MAX_BAR <= TURBO_MIN_BAR)
-  {
-    TURBO_MIN_BAR = -0.4;
-    TURBO_MAX_BAR = 1.6;
-    saveValues();
-  }
 }
 
 // ==== Restart ESP ====
@@ -1000,51 +993,5 @@ void loop()
 
   delay(10);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // J'ai fini mon code.
