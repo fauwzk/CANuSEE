@@ -969,7 +969,6 @@ void loop()
       {
         resetDTCs();
         // If on DTC screen, reset DTC codes
-        longPressHandled = true;
         if (buttonPressed)
         {
           restart_ESP();
