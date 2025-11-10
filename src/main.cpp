@@ -64,8 +64,8 @@ unsigned long lastSwitch = 0;
 const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
 
 // ==== Default Turbo gauge limits ====
-float TURBO_MIN_BAR = -0.4;
-float TURBO_MAX_BAR = 1.6;
+float TURBO_MIN_BAR;
+float TURBO_MAX_BAR;
 
 // ==== Debounce ====
 #define BUTTON_PIN 32
@@ -79,25 +79,25 @@ esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
 // ==== Variables for OBD-II data ====
-double atmo_kpa = 0.0;
-double maf_kpa = 0.0;
-double coolant_temp = 0.0;
-double intake_temp = 0.0;
-double engine_load = 0.0;
-double battery_voltage = 0.0;
-double oil_temp = 0.0;
-double turbo_pressure = 0.0;
+float atmo_kpa = 0.0;
+float maf_kpa = 0.0;
+float coolant_temp = 0.0;
+float intake_temp = 0.0;
+float engine_load = 0.0;
+float battery_voltage = 0.0;
+float oil_temp = 0.0;
+float turbo_pressure = 0.0;
 
 // ==== Variables to hold last valid readings ====
-double atmoPressure = 0.0;
-double mafPressure = 0.0;
-double intakeTemp = 0.0;
-double engineLoad = 0.0;
-double coolantTemp = 0.0;
-double batteryVoltage = 0.0;
-double fuelLevel = 0.0;
-double oilTemp = 0.0;
-double turboPressure = 0.0;
+float atmoPressure = 0.0;
+float mafPressure = 0.0;
+float intakeTemp = 0.0;
+float engineLoad = 0.0;
+float coolantTemp = 0.0;
+float batteryVoltage = 0.0;
+float fuelLevel = 0.0;
+float oilTemp = 0.0;
+float turboPressure = 0.0;
 
 String generateWebPage()
 {
