@@ -14,9 +14,24 @@ const char *ssid = "CANuSEE_Config";
 // ==== Web Server ====
 WebServer server(80);
 
-// ==== EEPROM Setup ====
-#define EEPROM_SIZE 8
+struct Settings
+{
+  int last_screen;
+  int boost_screen_type;
+  float turbo_min;
+  float turbo_max;
+  int engload_screen_type;
+  int battery_screen_type;
+  int coolant_screen_type;
+  int tick_line_gauge;
+};
 
+// ==== EEPROM Setup ====
+#define EEPROM_SIZE sizeof(Settings)
+
+Settings cfg;
+
+/*
 // ==== EEPROM Addresses ====
 #define EEPROM_LAST_SCREEN 0
 #define EEPROM_BOOST_SCREEN_TYPE 1
@@ -26,12 +41,13 @@ WebServer server(80);
 #define EEPROM_BATTERY_SCREEN_TYPE 5
 #define EEPROM_COOLANT_SCREEN_TYPE 6
 #define EEPROM_TICK_LINE_GAUGE 7
+*/
 
-uint8_t BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
-uint8_t ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
-uint8_t BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
-uint8_t COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
-uint8_t TICK_LINE_GAUGE = 2;
+int BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
+int ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
+int BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
+int COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
+int TICK_LINE_GAUGE = 2;
 
 // ==== Debug Mode ====
 bool debug = false;
@@ -128,25 +144,21 @@ String generateWebPage()
 
 void saveValues()
 {
-  EEPROM.put(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
-  EEPROM.put(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
-  EEPROM.put(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
-  EEPROM.put(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
-  EEPROM.put(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
-  EEPROM.put(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
-  EEPROM.put(EEPROM_TICK_LINE_GAUGE, TICK_LINE_GAUGE);
+  EEPROM.put(0, cfg);
   EEPROM.commit();
 }
 
 void loadValues()
 {
-  EEPROM.get(EEPROM_TURBO_MIN_ADDR, TURBO_MIN_BAR);
-  EEPROM.get(EEPROM_TURBO_MAX_ADDR, TURBO_MAX_BAR);
-  EEPROM.get(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
-  EEPROM.get(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
-  EEPROM.get(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
-  EEPROM.get(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
-  EEPROM.get(EEPROM_TICK_LINE_GAUGE, TICK_LINE_GAUGE);
+  cfg = {
+      screenIndex,
+      BOOST_SCREEN,
+      TURBO_MIN_BAR,  // magic number
+      TURBO_MAX_BAR,  // mode   // counter
+      ENGLOAD_SCREEN, // threshold
+      BATTERY_SCREEN, // gain
+      COOLANT_SCREEN,
+      TICK_LINE_GAUGE};
 }
 
 // ==== Restart ESP ====
@@ -755,7 +767,7 @@ void setup()
   delay(500);
 
   // Read the last screen index from EEPROM
-  screenIndex = EEPROM.read(EEPROM_LAST_SCREEN);
+  screenIndex = cfg.last_screen;
   if (screenIndex >= screenNumbers)
   {
     screenIndex = 0; // Reset to 0 if out of bounds
@@ -764,7 +776,7 @@ void setup()
   display.display();
   delay(1000);
 
-  BOOST_SCREEN = EEPROM.read(EEPROM_BOOST_SCREEN_TYPE);
+  BOOST_SCREEN = cfg.boost_screen_type;
   if (BOOST_SCREEN > ScreenTypes - 1)
   {
     BOOST_SCREEN = 0; // Reset to 0 if out of bounds
@@ -866,7 +878,8 @@ void setup()
             {
   screenIndex = (screenIndex + 1) % screenNumbers;
   fadeTransition((screenIndex + 1) % screenNumbers);
-  EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
+  cfg.last_screen = screenIndex;
+  EEPROM.put(0, cfg);
   EEPROM.commit();
   server.send(200, "text/html",
               "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
@@ -916,7 +929,8 @@ void loop()
       // Transition vers l’écran suivant une fois les données prêtes
       fadeTransition((screenIndex + 1) % screenNumbers);
       screenIndex = (screenIndex + 1) % screenNumbers;
-      EEPROM.write(EEPROM_LAST_SCREEN, screenIndex);
+      cfg.last_screen = screenIndex;
+      EEPROM.put(0, cfg);
       EEPROM.commit();
       lastSwitch = millis();
     }
@@ -931,7 +945,8 @@ void loop()
       {
         // ==== LONG PRESS ACTION ====
         BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
-        EEPROM.write(EEPROM_BOOST_SCREEN_TYPE, BOOST_SCREEN);
+        cfg.boost_screen_type = BOOST_SCREEN;
+        EEPROM.put(0, cfg);
         EEPROM.commit();
         display.display();
         delay(1000);
@@ -940,7 +955,8 @@ void loop()
       else if (screenIndex == 3)
       {
         ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
-        EEPROM.write(EEPROM_ENGLOAD_SCREEN_TYPE, ENGLOAD_SCREEN);
+        cfg.engload_screen_type = ENGLOAD_SCREEN;
+        EEPROM.put(0, cfg);
         EEPROM.commit();
         display.display();
         delay(1000);
@@ -949,7 +965,8 @@ void loop()
       else if (screenIndex == 4)
       {
         BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
-        EEPROM.write(EEPROM_BATTERY_SCREEN_TYPE, BATTERY_SCREEN);
+        cfg.battery_screen_type = BATTERY_SCREEN;
+        EEPROM.put(0, cfg);
         EEPROM.commit();
         display.display();
         delay(1000);
@@ -958,7 +975,8 @@ void loop()
       else if (screenIndex == 5)
       {
         COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
-        EEPROM.write(EEPROM_COOLANT_SCREEN_TYPE, COOLANT_SCREEN);
+        cfg.coolant_screen_type = COOLANT_SCREEN;
+        EEPROM.put(0, cfg);
         EEPROM.commit();
         display.display();
         delay(1000);
