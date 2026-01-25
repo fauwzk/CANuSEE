@@ -95,14 +95,14 @@ esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC
 esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
 
 // ==== Variables for OBD-II data ====
-float atmo_kpa = 0.0;
-float maf_kpa = 0.0;
-float coolant_temp = 0.0;
-float intake_temp = 0.0;
-float engine_load = 0.0;
-float battery_voltage = 0.0;
-float oil_temp = 0.0;
-float turbo_pressure = 0.0;
+float atmo_kpa;
+float maf_kpa;
+float coolant_temp;
+float intake_temp;
+float engine_load;
+float battery_voltage;
+float oil_temp;
+float turbo_pressure;
 
 // ==== Variables to hold last valid readings ====
 float atmoPressure = 0.0;
@@ -206,6 +206,10 @@ void loadValues()
 {
   EEPROM.get(0, cfg);
   screenIndex = cfg.last_screen;
+  if (screenIndex >= screenNumbers)
+  {
+    screenIndex = 0; // Reset to 0 if out of bounds
+  }
   BOOST_SCREEN = cfg.boost_screen_type;
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
@@ -222,7 +226,6 @@ void loadValues()
   Serial.printf("Battery Screen Type: %d\n", BATTERY_SCREEN);
   Serial.printf("Coolant Screen Type: %d\n", COOLANT_SCREEN);
   Serial.printf("Tick Line Gauge: %d\n", TICK_LINE_GAUGE);
-  delay(5000); // Pause to read serial output
 }
 
 // ==== Restart ESP ====
@@ -638,14 +641,35 @@ void draw_BoostScreens()
   }
 }
 
-void draw_btnScreen()
+enum DTCState
 {
-  display.clear();
+  DTC_IDLE,
+  DTC_REQUESTED,
+  DTC_READY
+};
+
+void draw_dtcCodes_nonBlocking()
+{
+
+  myELM327.currentDTCCodes(false); // false = non bloquant si supporté
+  myELM327.monitorStatus();
+  uint8_t codesFound = myELM327.DTC_Response.codesFound;
+  // --- Affichage ---
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
-  display.drawString(centerX, 0, "Button Control");
+  display.drawString(centerX, 0, "DTC Codes:");
+
   display.setFont(ArialMT_Plain_10);
-  display.drawString(centerX, 20, "Use web to send");
+  if (codesFound == 0)
+  {
+    display.drawString(centerX, 20, "No DTC Codes");
+  }
+  else
+  {
+    display.setFont(ArialMT_Plain_24);
+    display.drawString(centerX, 20, String(codesFound));
+  }
+
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
@@ -673,50 +697,7 @@ void draw_dtcCodes()
     display.setFont(ArialMT_Plain_24);
     display.drawString(centerX, 20, String(codesFound));
   }
-  /* else
-  {
-    // --- Réglages de mise en page ---
-    const int colWidth = display.getWidth() / 2; // largeur d'une colonne
-    const int startY = 18;                       // position verticale de départ
-    const int lineHeight = 10;                   // hauteur d'une ligne
-    const int visibleItems = itemsPerCol * 2;    // total visible à l'écran
 
-    static int scrollOffset = 0; // index de défilement
-    static unsigned long lastScrollTime = 0;
-    const unsigned long scrollInterval = 2000; // délai entre défilements (ms)
-
-    if (codesFound <= visibleItems)
-    {
-      scrollOffset = 0; // pas de défilement nécessaire
-    }
-    else
-    {
-      if (millis() - lastScrollTime > scrollInterval)
-      {
-        scrollOffset++;
-        if (scrollOffset > (codesFound - visibleItems))
-          scrollOffset = 0;
-        lastScrollTime = millis();
-      }
-    }
-
-    // --- Affichage des codes visibles ---
-    for (uint8_t i = 0; i < visibleItems; i++)
-    {
-      int index = i + scrollOffset;
-      if (index >= codesFound)
-        break;
-
-      int col = i / itemsPerCol; // 0 = gauche, 1 = droite
-      int row = i % itemsPerCol;
-
-      int x = (col == 0) ? colWidth / 2 : (colWidth + colWidth / 2);
-      int y = startY + (row * lineHeight);
-
-      String codeText = String(index + 1) + ". " + String(myELM327.DTC_Response.codes[index]);
-      display.drawString(x, y, codeText);
-    }
-  } */
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
@@ -765,7 +746,7 @@ void draw_GaugeScreen(uint8_t index)
     draw_CoolantTempScreens();
     break;
   case 6:
-    draw_dtcCodes();
+    draw_dtcCodes_nonBlocking();
     break;
   default:
     draw_NoDataScreen();
@@ -839,13 +820,13 @@ void setup()
   EEPROM.begin(EEPROM_SIZE);
   draw_BottomText("EEPROM Init done");
   display.display();
-  delay(500);
+  delay(250);
 
   // ==== Load settings from EEPROM ====
   draw_BottomText("Loading Settings...");
   display.display();
   loadValues();
-  delay(500);
+  delay(250);
 
   draw_BottomText("Mounting FS...");
   display.display();
@@ -858,7 +839,7 @@ void setup()
   draw_BottomText("FS mounted");
   display.display();
   Serial.println("LittleFS mounted successfully");
-  delay(500);
+  delay(250);
 
   // Read the last screen index from EEPROM
   screenIndex = cfg.last_screen;
@@ -868,7 +849,7 @@ void setup()
   }
   draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
   display.display();
-  delay(1000);
+  delay(250);
 
   BOOST_SCREEN = cfg.boost_screen_type;
   if (BOOST_SCREEN > ScreenTypes - 1)
@@ -888,7 +869,7 @@ void setup()
   draw_BottomText("BT Init done");
   display.display();
   SerialBT.setPin(ELM327_BT_PIN);
-  delay(2000); // wait for connection
+  delay(250); // wait for connection
 
   // Connect to the paired device by MAC address
   draw_BottomText("BT Connecting...");
@@ -913,7 +894,7 @@ void setup()
   }
   draw_BottomText("ELM327 Connected");
   display.display();
-  delay(500);
+  delay(250);
 
   draw_BottomText("ELM327 Config...");
   display.display();
@@ -921,7 +902,7 @@ void setup()
   myELM327.sendCommand(ALLOW_LONG_MESSAGES);
   draw_BottomText("ELM327 Config done");
   display.display();
-  delay(500);
+  delay(250);
 
   // ==== Initial screen ====
   display.clear();
@@ -931,14 +912,14 @@ void setup()
   delay(750);
   display.normalDisplay();
 
-  // ==== WiFi Access Point Setup ====
+  /* // ==== WiFi Access Point Setup ====
   WiFi.softAP(ssid, NULL);
   Serial.println("WiFi AP started");
   Serial.print("IP: ");
   Serial.println(WiFi.softAPIP());
   displayInfo("WiFi: " + WiFi.softAPIP().toString());
   display.display();
-  delay(1000);
+  delay(1000); */
 
   // ==== Web Server Routes ====
   server.on("/", HTTP_GET, []()
