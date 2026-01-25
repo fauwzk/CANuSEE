@@ -37,18 +37,6 @@ struct Settings
 
 Settings cfg;
 
-/*
-// ==== EEPROM Addresses ====
-#define EEPROM_LAST_SCREEN 0
-#define EEPROM_BOOST_SCREEN_TYPE 1
-#define EEPROM_TURBO_MIN_ADDR 2
-#define EEPROM_TURBO_MAX_ADDR 3
-#define EEPROM_ENGLOAD_SCREEN_TYPE 4
-#define EEPROM_BATTERY_SCREEN_TYPE 5
-#define EEPROM_COOLANT_SCREEN_TYPE 6
-#define EEPROM_TICK_LINE_GAUGE 7
-*/
-
 int BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
 int ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
 int BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
@@ -83,11 +71,10 @@ uint8_t screenIndex = 0;
 
 uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
-const int itemsPerCol = 3; // lignes par colonne (2 colonnes visibles)
 
 // ==== Default Turbo gauge limits ====
-float TURBO_MIN_BAR;
-float TURBO_MAX_BAR;
+float TURBO_MIN_BAR = -0.7;
+float TURBO_MAX_BAR = 1.5;
 
 // ==== Debounce ====
 #define BUTTON_PIN 32
@@ -217,11 +204,27 @@ void loadValues()
     screenIndex = 0; // Reset to 0 if out of bounds
   }
   BOOST_SCREEN = cfg.boost_screen_type;
+  if (BOOST_SCREEN < 0 || BOOST_SCREEN >= ScreenTypes)
+  {
+    BOOST_SCREEN = 0; // Reset to 0 if out of bounds
+  }
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
   ENGLOAD_SCREEN = cfg.engload_screen_type;
+  if (ENGLOAD_SCREEN < 0 || ENGLOAD_SCREEN >= ScreenTypes)
+  {
+    ENGLOAD_SCREEN = 0; // Reset to 0 if out of bounds
+  }
   BATTERY_SCREEN = cfg.battery_screen_type;
+  if (BATTERY_SCREEN < 0 || BATTERY_SCREEN >= ScreenTypes)
+  {
+    BATTERY_SCREEN = 0; // Reset to 0 if out of bounds
+  }
   COOLANT_SCREEN = cfg.coolant_screen_type;
+  if (COOLANT_SCREEN < 0 || COOLANT_SCREEN >= ScreenTypes)
+  {
+    COOLANT_SCREEN = 0; // Reset to 0 if out of bounds
+  }
   TICK_LINE_GAUGE = cfg.tick_line_gauge;
   Serial.println("Settings loaded from EEPROM:");
   Serial.printf("Last Screen: %d\n", screenIndex);
@@ -647,13 +650,6 @@ void draw_BoostScreens()
   }
 }
 
-enum DTCState
-{
-  DTC_IDLE,
-  DTC_REQUESTED,
-  DTC_READY
-};
-
 void draw_dtcCodes_nonBlocking()
 {
 
@@ -780,23 +776,34 @@ void fadeTransition(uint8_t nextScreen)
   }
 }
 
-void drawSpinner()
+void drawHeartbeatSpinner()
 {
-  unsigned long waitStart = millis();
-  const unsigned long waitTimeout = 3000; // 3 secondes max
-  uint8_t spinnerIndex = 0;
-  const char spinnerChars[] = {'|', '/', '-', '\\'}; // animation spinner
+  static uint8_t spinnerIndex = 0;
+  static unsigned long lastUpdate = 0;
 
-  while (myELM327.nb_rx_state == ELM_GETTING_MSG && millis() - waitStart < waitTimeout)
+  const unsigned long spinnerInterval = 200; // vitesse du spinner (ms)
+  const char spinnerChars[] = {'|', '/', '-', '\\'};
+
+  if (millis() - lastUpdate >= spinnerInterval)
   {
-    // Affiche une animation fluide dans le bas de l’écran
-    String waitText = "Waiting data ";
-    waitText += spinnerChars[spinnerIndex];
-    draw_BottomText(waitText);
-    display.display();
+    lastUpdate = millis();
 
+    // Calculer position bas à droite
+    int x = 122; // colonne proche du bord droit (OLED 128px)
+    int y = 54;  // ligne du bas (OLED 64px, bas rectangle à 54)
+
+    // Effacer le caractère précédent
+    display.setColor(BLACK);
+    display.fillRect(x, y, 6, 10); // petite zone du spinner
+    display.setColor(WHITE);
+
+    // Dessiner le spinner
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(x, y, String(spinnerChars[spinnerIndex]));
+
+    // Passer au caractère suivant
     spinnerIndex = (spinnerIndex + 1) % 4;
-    delay(120); // vitesse de rotation du spinner
   }
 }
 
@@ -861,20 +868,8 @@ void setup()
   display.display();
   Serial.println("LittleFS mounted successfully");
 
-  // Read the last screen index from EEPROM
-  screenIndex = cfg.last_screen;
-  if (screenIndex >= screenNumbers)
-  {
-    screenIndex = 0; // Reset to 0 if out of bounds
-  }
   draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
   display.display();
-
-  BOOST_SCREEN = cfg.boost_screen_type;
-  if (BOOST_SCREEN > ScreenTypes - 1)
-  {
-    BOOST_SCREEN = 0; // Reset to 0 if out of bounds
-  }
 
   // ==== Connect to Classic Bluetooth ELM327 ====
   if (!SerialBT.begin("CANuSEE", true))
@@ -971,6 +966,7 @@ void setup()
     {
       server.send(400, "text/plain", "Missing parameters");
     } });
+
   server.on("/nextpage", HTTP_GET, []()
             {
     screenIndex = (screenIndex + 1) % screenNumbers;
@@ -980,6 +976,7 @@ void setup()
     EEPROM.commit();
     server.send(200, "text/html",
                 "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
+
   server.on("/reset", HTTP_GET, []()
             {
     server.send(200, "text/html",
@@ -1098,7 +1095,8 @@ void loop()
 
   // ==== Draw current gauge ====
   display.clear();
-  draw_GaugeScreen(screenIndex);
+  draw_GaugeScreen(screenIndex); // ton écran principal
+  drawHeartbeatSpinner();        // spinner toujours animé
   display.display();
 
   delay(10);
