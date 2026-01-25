@@ -1096,7 +1096,7 @@ void loop()
   // ==== Draw current gauge ====
   display.clear();
   draw_GaugeScreen(screenIndex); // ton écran principal
-  drawHeartbeatSpinner();        // spinner toujours animé
+  // drawHeartbeatSpinner();        // spinner toujours animé
   display.display();
 
   delay(10);
