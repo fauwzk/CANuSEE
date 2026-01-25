@@ -7,6 +7,7 @@
 #include <WebServer.h>
 #include <LittleFS.h>
 #include <FS.h>
+#include <DNSServer.h>
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -14,6 +15,11 @@ const char *ssid = "CANuSEE_Config";
 // ==== Web Server ====
 WebServer server(80);
 
+// ==== DNS Server ====
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
+
+// ==== Settings Structure ====
 struct Settings
 {
   int last_screen;
@@ -793,6 +799,23 @@ void drawSpinner()
     delay(120); // vitesse de rotation du spinner
   }
 }
+
+// ==== Start Captive Portal ====
+void startCaptivePortal()
+{
+  WiFi.softAP(ssid, NULL);
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.println("WiFi AP started: " + myIP.toString());
+  // Serveur DNS pour captive portal
+  dnsServer.start(DNS_PORT, "*", myIP); // redirige tout vers l'ESP
+
+  server.onNotFound([]()
+                    {
+server.sendHeader("Location", "/");
+server.send(302, "text/plain", ""); });
+  server.begin();
+}
+
 // ==== Setup function ====
 void setup()
 {
@@ -980,6 +1003,7 @@ void setup()
 void loop()
 {
   server.handleClient();
+  dnsServer.processNextRequest();
 
   static bool buttonPressed = false;
   static unsigned long buttonPressTime = 0;
