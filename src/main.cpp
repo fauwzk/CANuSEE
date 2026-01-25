@@ -458,7 +458,7 @@ void resetDTCs()
   }
   if (myELM327.nb_rx_state == ELM_SUCCESS)
   {
-    displayInfo("DTCs Reset!");
+    displayInfo("DTCs Resetted!");
     delay(1000);
   }
   else
@@ -882,7 +882,7 @@ void setup()
     draw_BottomText("BT INIT FAIL");
     display.invertDisplay();
     display.display();
-    delay(1000);
+    delay(10000);
     restart_ESP();
   }
   draw_BottomText("BT Init done");
@@ -895,7 +895,7 @@ void setup()
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
     displayError("BT Conn FAIL");
-    delay(1000);
+    delay(10000);
     restart_ESP();
   }
   draw_BottomText("BT Connected");
@@ -907,7 +907,7 @@ void setup()
   if (!myELM327.begin(SerialBT, false, 2000))
   {
     displayError("ELM327 INIT FAIL");
-    delay(1000);
+    delay(10000);
     restart_ESP();
   }
   draw_BottomText("ELM327 Connected");
@@ -1084,11 +1084,6 @@ void loop()
       else if (screenIndex == 6)
       {
         resetDTCs();
-        // If on DTC screen, reset DTC codes
-        if (buttonPressed)
-        {
-          restart_ESP();
-        }
       }
       else
       {
