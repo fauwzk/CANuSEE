@@ -53,7 +53,7 @@ int TICK_LINE_GAUGE = 2;
 bool debug = false;
 
 // ==== Version ====
-String version = "v0.7";
+String version = "v0.9";
 String version_string = "CANuSEE " + version;
 
 // ==== OLED ====
@@ -144,21 +144,39 @@ String generateWebPage()
 
 void saveValues()
 {
+  cfg.last_screen = screenIndex;
+  cfg.boost_screen_type = BOOST_SCREEN;
+  cfg.turbo_min = TURBO_MIN_BAR;
+  cfg.turbo_max = TURBO_MAX_BAR;
+  cfg.engload_screen_type = ENGLOAD_SCREEN;
+  cfg.battery_screen_type = BATTERY_SCREEN;
+  cfg.coolant_screen_type = COOLANT_SCREEN;
+  cfg.tick_line_gauge = TICK_LINE_GAUGE;
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
 
 void loadValues()
 {
-  cfg = {
-      screenIndex,
-      BOOST_SCREEN,
-      TURBO_MIN_BAR,  // magic number
-      TURBO_MAX_BAR,  // mode   // counter
-      ENGLOAD_SCREEN, // threshold
-      BATTERY_SCREEN, // gain
-      COOLANT_SCREEN,
-      TICK_LINE_GAUGE};
+  EEPROM.get(0, cfg);
+  screenIndex = cfg.last_screen;
+  BOOST_SCREEN = cfg.boost_screen_type;
+  TURBO_MIN_BAR = cfg.turbo_min;
+  TURBO_MAX_BAR = cfg.turbo_max;
+  ENGLOAD_SCREEN = cfg.engload_screen_type;
+  BATTERY_SCREEN = cfg.battery_screen_type;
+  COOLANT_SCREEN = cfg.coolant_screen_type;
+  TICK_LINE_GAUGE = cfg.tick_line_gauge;
+  Serial.println("Settings loaded from EEPROM:");
+  Serial.printf("Last Screen: %d\n", screenIndex);
+  Serial.printf("Boost Screen Type: %d\n", BOOST_SCREEN);
+  Serial.printf("Turbo Min: %.2f\n", TURBO_MIN_BAR);
+  Serial.printf("Turbo Max: %.2f\n", TURBO_MAX_BAR);
+  Serial.printf("EngLoad Screen Type: %d\n", ENGLOAD_SCREEN);
+  Serial.printf("Battery Screen Type: %d\n", BATTERY_SCREEN);
+  Serial.printf("Coolant Screen Type: %d\n", COOLANT_SCREEN);
+  Serial.printf("Tick Line Gauge: %d\n", TICK_LINE_GAUGE);
+  delay(5000); // Pause to read serial output
 }
 
 // ==== Restart ESP ====
@@ -593,6 +611,11 @@ void draw_dtcCodes()
   }
   else
   {
+    display.setFont(ArialMT_Plain_24);
+    display.drawString(centerX, 20, String(codesFound));
+  }
+  /* else
+  {
     // --- Réglages de mise en page ---
     const int colWidth = display.getWidth() / 2; // largeur d'une colonne
     const int startY = 18;                       // position verticale de départ
@@ -603,13 +626,19 @@ void draw_dtcCodes()
     static unsigned long lastScrollTime = 0;
     const unsigned long scrollInterval = 2000; // délai entre défilements (ms)
 
-    // --- Défilement automatique ---
-    if (millis() - lastScrollTime > scrollInterval)
+    if (codesFound <= visibleItems)
     {
-      scrollOffset++;
-      if (scrollOffset > (codesFound - visibleItems))
-        scrollOffset = 0;
-      lastScrollTime = millis();
+      scrollOffset = 0; // pas de défilement nécessaire
+    }
+    else
+    {
+      if (millis() - lastScrollTime > scrollInterval)
+      {
+        scrollOffset++;
+        if (scrollOffset > (codesFound - visibleItems))
+          scrollOffset = 0;
+        lastScrollTime = millis();
+      }
     }
 
     // --- Affichage des codes visibles ---
@@ -628,7 +657,7 @@ void draw_dtcCodes()
       String codeText = String(index + 1) + ". " + String(myELM327.DTC_Response.codes[index]);
       display.drawString(x, y, codeText);
     }
-  }
+  } */
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
   display.display();
@@ -753,6 +782,12 @@ void setup()
   display.display();
   delay(500);
 
+  // ==== Load settings from EEPROM ====
+  draw_BottomText("Loading Settings...");
+  display.display();
+  loadValues();
+  delay(500);
+
   draw_BottomText("Mounting FS...");
   display.display();
   if (!LittleFS.begin())
@@ -811,7 +846,7 @@ void setup()
   // ==== ELM327 init ====
   draw_BottomText("ELM327 Init...");
   display.display();
-  if (!myELM327.begin(SerialBT, true, 2000))
+  if (!myELM327.begin(SerialBT, false, 2000))
   {
     displayError("ELM327 INIT FAIL");
     delay(1000);
@@ -836,9 +871,6 @@ void setup()
   display.display();
   delay(750);
   display.normalDisplay();
-
-  // ==== Load Turbo Limits from EEPROM ====
-  loadValues();
 
   // ==== WiFi Access Point Setup ====
   WiFi.softAP(ssid, NULL);
