@@ -115,6 +115,52 @@ float fuelLevel = 0.0;
 float oilTemp = 0.0;
 float turboPressure = 0.0;
 
+uint8_t data[8];
+
+void sendCAN_ELM(uint16_t id, uint8_t len, uint8_t *data)
+{
+  char cmd[64];
+  char *ptr = cmd;
+
+  // ID sur 3 octets hex
+  sprintf(ptr, "%03X %02X", id, len);
+  ptr += strlen(ptr);
+
+  // Ajout des données
+  for (uint8_t i = 0; i < len; i++)
+  {
+    sprintf(ptr, " %02X", data[i]);
+    ptr += strlen(ptr);
+  }
+
+  // Envoi vers ELM327
+  myELM327.sendCommand(cmd);
+}
+
+void BTN_MENU(void)
+{
+  data[0] = 0x40;
+  data[1] = 0x00;
+  data[2] = 0x00;
+  data[3] = 0x00;
+  data[4] = 0x00;
+  data[5] = 0x00;
+  sendCAN_ELM(0x3E5, 6, data);
+  delay(1);
+}
+
+void BTN_UP(void)
+{
+  data[0] = 0x00;
+  data[1] = 0x00;
+  data[2] = 0x00;
+  data[3] = 0x00;
+  data[4] = 0x00;
+  data[5] = 0x40;
+  sendCAN_ELM(0x3E5, 6, data);
+  delay(1);
+}
+
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -592,6 +638,19 @@ void draw_BoostScreens()
   }
 }
 
+void draw_btnScreen()
+{
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(centerX, 0, "Button Control");
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(centerX, 20, "Use web to send");
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+  display.display();
+}
+
 void draw_dtcCodes()
 {
   myELM327.currentDTCCodes(true);
@@ -885,42 +944,52 @@ void setup()
   server.on("/", HTTP_GET, []()
             { server.send(200, "text/html", generateWebPage()); });
 
+  server.on("/btn_up", HTTP_GET, []()
+            { BTN_UP();
+              server.send(200, "text/html",
+                          "<html><body><h3>Button Up Pressed!</h3><a href='/'>Back</a></body></html>"); });
+
+  server.on("/btn_menu", HTTP_GET, []()
+            { BTN_MENU();
+              server.send(200, "text/html",
+                          "<html><body><h3>Button Menu Pressed!</h3><a href='/'>Back</a></body></html>"); });
+
   server.on("/save", HTTP_POST, []()
             {
-  if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
-      server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
-      server.hasArg("coolant_gauge_type") && server.hasArg("ticks"))
-  {
-    TURBO_MIN_BAR = server.arg("boost_min").toFloat();
-    TURBO_MAX_BAR = server.arg("boost_max").toFloat();
-    BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
-    ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
-    BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
-    COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
-    TICK_LINE_GAUGE = server.arg("ticks").toInt();
-    saveValues();
-    server.send(200, "text/html",
-                "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
-  }
-  else
-  {
-    server.send(400, "text/plain", "Missing parameters");
-  } });
+    if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
+        server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
+        server.hasArg("coolant_gauge_type") && server.hasArg("ticks"))
+    {
+      TURBO_MIN_BAR = server.arg("boost_min").toFloat();
+      TURBO_MAX_BAR = server.arg("boost_max").toFloat();
+      BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
+      ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
+      BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
+      COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+      TICK_LINE_GAUGE = server.arg("ticks").toInt();
+      saveValues();
+      server.send(200, "text/html",
+                  "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
+    }
+    else
+    {
+      server.send(400, "text/plain", "Missing parameters");
+    } });
   server.on("/nextpage", HTTP_GET, []()
             {
-  screenIndex = (screenIndex + 1) % screenNumbers;
-  fadeTransition((screenIndex + 1) % screenNumbers);
-  cfg.last_screen = screenIndex;
-  EEPROM.put(0, cfg);
-  EEPROM.commit();
-  server.send(200, "text/html",
-              "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
+    screenIndex = (screenIndex + 1) % screenNumbers;
+    fadeTransition((screenIndex + 1) % screenNumbers);
+    cfg.last_screen = screenIndex;
+    EEPROM.put(0, cfg);
+    EEPROM.commit();
+    server.send(200, "text/html",
+                "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
   server.on("/reset", HTTP_GET, []()
             {
-  server.send(200, "text/html",
-              "<html><body><h3>Device Resetting...</h3></body></html>");
-  delay(1000);
-  restart_ESP(); });
+    server.send(200, "text/html",
+                "<html><body><h3>Device Resetting...</h3></body></html>");
+    delay(1000);
+    restart_ESP(); });
 
   server.begin();
   Serial.println("Web server started");
