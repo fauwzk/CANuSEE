@@ -843,13 +843,11 @@ void setup()
   EEPROM.begin(EEPROM_SIZE);
   draw_BottomText("EEPROM Init done");
   display.display();
-  delay(250);
 
   // ==== Load settings from EEPROM ====
   draw_BottomText("Loading Settings...");
   display.display();
   loadValues();
-  delay(250);
 
   draw_BottomText("Mounting FS...");
   display.display();
@@ -862,7 +860,6 @@ void setup()
   draw_BottomText("FS mounted");
   display.display();
   Serial.println("LittleFS mounted successfully");
-  delay(250);
 
   // Read the last screen index from EEPROM
   screenIndex = cfg.last_screen;
@@ -872,7 +869,6 @@ void setup()
   }
   draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
   display.display();
-  delay(250);
 
   BOOST_SCREEN = cfg.boost_screen_type;
   if (BOOST_SCREEN > ScreenTypes - 1)
@@ -892,7 +888,6 @@ void setup()
   draw_BottomText("BT Init done");
   display.display();
   SerialBT.setPin(ELM327_BT_PIN);
-  delay(250); // wait for connection
 
   // Connect to the paired device by MAC address
   draw_BottomText("BT Connecting...");
@@ -917,7 +912,6 @@ void setup()
   }
   draw_BottomText("ELM327 Connected");
   display.display();
-  delay(250);
 
   draw_BottomText("ELM327 Config...");
   display.display();
@@ -925,15 +919,13 @@ void setup()
   myELM327.sendCommand(ALLOW_LONG_MESSAGES);
   draw_BottomText("ELM327 Config done");
   display.display();
-  delay(250);
+
+  startCaptivePortal();
 
   // ==== Initial screen ====
-  display.clear();
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(64, 25, "All up!");
+  draw_BottomText("All up!");
   display.display();
   delay(750);
-  display.normalDisplay();
 
   /* // ==== WiFi Access Point Setup ====
   WiFi.softAP(ssid, NULL);
