@@ -46,7 +46,7 @@ int TICK_LINE_GAUGE = 2;
 // ==== Dashboard refresh state ====
 uint8_t dashStep = 0;
 unsigned long dashLastUpdate = 0;
-const unsigned long dashDelay = 50; // small delay between requests
+const unsigned long dashDelay = 10; // small delay between requests
 
 // Stored dashboard values
 float dashBoost = 0;
@@ -1164,7 +1164,7 @@ void loop()
       }
     }
   }
-
+  display.clear();
   draw_GaugeScreen(screenIndex);
   display.display();
 
