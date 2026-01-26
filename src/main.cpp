@@ -563,18 +563,31 @@ void drawDashboardScreen()
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_LEFT);
 
-  display.drawString(0, 0, "BOOST:");
-  display.drawString(60, 0, String(dashBoost, 2) + " bar");
+  // Column X positions
+  int col1 = 0;
+  int col2 = 64; // adjust if needed for your screen width
 
-  display.drawString(0, 14, "IAT:");
-  display.drawString(60, 14, String(dashIAT, 1) + " C");
+  // Row Y positions
+  int row1 = 0;
+  int row2 = 20;
 
-  display.drawString(0, 28, "COOLANT:");
-  display.drawString(60, 28, String(dashCoolant, 1) + " C");
+  // ---- Top left ----
+  display.drawString(col1, row1, "BOOST:");
+  display.drawString(col1, row1 + 10, String(dashBoost, 2) + " bar");
 
-  display.drawString(0, 42, "ENG LOAD:");
-  display.drawString(60, 42, String(dashLoad, 1) + " %");
+  // ---- Top right ----
+  display.drawString(col2, row1, "IAT:");
+  display.drawString(col2, row1 + 10, String(dashIAT, 1) + " C");
 
+  // ---- Bottom left ----
+  display.drawString(col1, row2, "COOLANT:");
+  display.drawString(col1, row2 + 10, String(dashCoolant, 1) + " C");
+
+  // ---- Bottom right ----
+  display.drawString(col2, row2, "ENG LOAD:");
+  display.drawString(col2, row2 + 10, String(dashLoad, 1) + " %");
+
+  // ---- Keep bottom bar exactly the same ----
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
 
@@ -855,6 +868,7 @@ void fadeTransition(uint8_t nextScreen)
   display.displayOff();
   display.clear();
   draw_GaugeScreen(nextScreen);
+  display.clear();
   display.displayOn();
   for (int i = 0; i < steps; i++)
   {
