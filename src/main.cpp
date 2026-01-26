@@ -43,8 +43,16 @@ int BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
 int COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
 int TICK_LINE_GAUGE = 2;
 
-// ==== Debug Mode ====
-bool debug = false;
+// ==== Dashboard refresh state ====
+uint8_t dashStep = 0;
+unsigned long dashLastUpdate = 0;
+const unsigned long dashDelay = 50; // small delay between requests
+
+// Stored dashboard values
+float dashBoost = 0;
+float dashIAT = 0;
+float dashCoolant = 0;
+float dashLoad = 0;
 
 // ==== Version ====
 String version = "v0.9";
@@ -66,7 +74,7 @@ const int centerX = 64;
 const int centerY = 55;
 
 // ==== Screen control ====
-const int screenNumbers = 7;
+const int screenNumbers = 8;
 uint8_t screenIndex = 0;
 
 uint8_t ScreenTypes = 2;
@@ -80,7 +88,7 @@ float TURBO_MAX_BAR = 1.5;
 #define BUTTON_PIN 32
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 300;
-const unsigned long longPressDuration = 2000; // 2 seconds for long press
+const unsigned long longPressDuration = 1000; // 2 seconds for long press
 
 // ==== Bluetooth setup ====
 #define BT_DISCOVER_TIME 500000
@@ -498,6 +506,81 @@ void get_AtmosphericPressure()
   }
 }
 
+void updateDashboardSequential()
+{
+  if (millis() - dashLastUpdate < dashDelay)
+    return;
+  dashLastUpdate = millis();
+
+  switch (dashStep)
+  {
+  // ---- STEP 0 : BOOST ----
+  case 0:
+    turbo_pressure = myELM327.manifoldPressure();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      turbo_pressure = (turbo_pressure - 100) * 0.01;
+      dashBoost = turbo_pressure;
+      dashStep++;
+    }
+    break;
+
+  // ---- STEP 1 : Intake temp ----
+  case 1:
+    intake_temp = myELM327.intakeAirTemp();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      dashIAT = intake_temp;
+      dashStep++;
+    }
+    break;
+
+  // ---- STEP 2 : Coolant ----
+  case 2:
+    coolant_temp = myELM327.engineCoolantTemp();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      dashCoolant = coolant_temp;
+      dashStep++;
+    }
+    break;
+
+  // ---- STEP 3 : Engine load ----
+  case 3:
+    engine_load = myELM327.engineLoad();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      dashLoad = engine_load;
+      dashStep = 0; // restart cycle
+    }
+    break;
+  }
+}
+
+void drawDashboardScreen()
+{
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+
+  display.drawString(0, 0, "BOOST:");
+  display.drawString(60, 0, String(dashBoost, 2) + " bar");
+
+  display.drawString(0, 14, "IAT:");
+  display.drawString(60, 14, String(dashIAT, 1) + " C");
+
+  display.drawString(0, 28, "COOLANT:");
+  display.drawString(60, 28, String(dashCoolant, 1) + " C");
+
+  display.drawString(0, 42, "ENG LOAD:");
+  display.drawString(60, 42, String(dashLoad, 1) + " %");
+
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+
+  display.display();
+}
+
 void draw_MAFScreen()
 {
   maf_kpa = myELM327.manifoldPressure();
@@ -748,7 +831,11 @@ void draw_GaugeScreen(uint8_t index)
     draw_CoolantTempScreens();
     break;
   case 6:
-    draw_dtcCodes_nonBlocking();
+    draw_dtcCodes();
+    break;
+  case 7:
+    updateDashboardSequential();
+    drawDashboardScreen();
     break;
   default:
     draw_NoDataScreen();
@@ -916,21 +1003,6 @@ void setup()
   display.display();
 
   startCaptivePortal();
-
-  // ==== Initial screen ====
-  draw_BottomText("All up!");
-  display.display();
-  delay(750);
-
-  /* // ==== WiFi Access Point Setup ====
-  WiFi.softAP(ssid, NULL);
-  Serial.println("WiFi AP started");
-  Serial.print("IP: ");
-  Serial.println(WiFi.softAPIP());
-  displayInfo("WiFi: " + WiFi.softAPIP().toString());
-  display.display();
-  delay(1000); */
-
   // ==== Web Server Routes ====
   server.on("/", HTTP_GET, []()
             { server.send(200, "text/html", generateWebPage()); });
@@ -970,7 +1042,7 @@ void setup()
   server.on("/nextpage", HTTP_GET, []()
             {
     screenIndex = (screenIndex + 1) % screenNumbers;
-    fadeTransition((screenIndex + 1) % screenNumbers);
+    fadeTransition(screenIndex);
     cfg.last_screen = screenIndex;
     EEPROM.put(0, cfg);
     EEPROM.commit();
@@ -985,7 +1057,7 @@ void setup()
     restart_ESP(); });
 
   server.begin();
-  Serial.println("Web server started");
+  fadeTransition(screenIndex);
 }
 
 // ==== Main loop ====
@@ -1093,10 +1165,7 @@ void loop()
     }
   }
 
-  // ==== Draw current gauge ====
-  display.clear();
-  draw_GaugeScreen(screenIndex); // ton écran principal
-  // drawHeartbeatSpinner();        // spinner toujours animé
+  draw_GaugeScreen(screenIndex);
   display.display();
 
   delay(10);
