@@ -942,17 +942,20 @@ void handleUpdatePage()
 void handleFirmwareUpload()
 {
   HTTPUpload &upload = server.upload();
-
+  Serial.println("FW Upload Status : " + String(upload.status));
   if (upload.status == UPLOAD_FILE_START)
   {
+    displayInfo("Firmware Update Start");
     Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
   }
   else if (upload.status == UPLOAD_FILE_WRITE)
   {
+    displayInfo("Updating...");
     Update.write(upload.buf, upload.currentSize);
   }
   else if (upload.status == UPLOAD_FILE_END)
   {
+    displayInfo("Finalizing Update...");
     Update.end(true);
   }
 }
@@ -961,123 +964,33 @@ void handleFirmwareUpload()
 void handleFSUpload()
 {
   HTTPUpload &upload = server.upload();
-
+  Serial.println("FS Upload Status: " + String(upload.status));
   if (upload.status == UPLOAD_FILE_START)
   {
-    Serial.println("LittleFS Update Start");
+    displayInfo("LittleFS Update Start");
     Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS);
     // U_FS targets the LittleFS partition automatically
   }
   else if (upload.status == UPLOAD_FILE_WRITE)
   {
+    displayInfo("LittleFS Updating...");
     Update.write(upload.buf, upload.currentSize);
   }
   else if (upload.status == UPLOAD_FILE_END)
   {
     if (Update.end(true))
     {
-      Serial.println("LittleFS Update Complete");
+      displayInfo("LittleFS Update Complete");
     }
     else
     {
-      Serial.println("LittleFS Update Failed");
+      displayInfo("LittleFS Update Failed");
     }
   }
 }
 
-// ==== Setup function ====
-void setup()
+void startServer()
 {
-  // ==== Basic setup ====
-  Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-  // ==== OLED init ====
-  display.init();
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(4, 8, "Fauwzk"); // Top left
-  display.drawString(32, 24, "Engineering");
-  draw_BottomText(version_string);
-  display.display();
-  delay(1000);
-  display.clear();
-  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
-  draw_BottomText("Starting...");
-  display.display();
-  delay(500);
-
-  // ==== EEPROM init ====
-  draw_BottomText("EEPROM Init");
-  display.display();
-  EEPROM.begin(EEPROM_SIZE);
-  draw_BottomText("EEPROM Init done");
-  display.display();
-
-  // ==== Load settings from EEPROM ====
-  draw_BottomText("Loading Settings...");
-  display.display();
-  loadValues();
-
-  draw_BottomText("Mounting FS...");
-  display.display();
-  if (!LittleFS.begin())
-  {
-    Serial.println("LittleFS mount failed!");
-    displayInfo("FS Error!");
-    restart_ESP();
-  }
-  draw_BottomText("FS mounted");
-  display.display();
-  Serial.println("LittleFS mounted successfully");
-
-  draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
-  display.display();
-
-  // ==== Connect to Classic Bluetooth ELM327 ====
-  if (!SerialBT.begin("CANuSEE", true))
-  { // true = master mode
-    draw_BottomText("BT INIT FAIL");
-    display.invertDisplay();
-    display.display();
-    delay(10000);
-    restart_ESP();
-  }
-  draw_BottomText("BT Init done");
-  display.display();
-  SerialBT.setPin(ELM327_BT_PIN);
-
-  // Connect to the paired device by MAC address
-  draw_BottomText("BT Connecting...");
-  display.display();
-  if (!SerialBT.connect(elm_address, sec_mask, role))
-  {
-    displayError("BT Conn FAIL");
-    delay(10000);
-    restart_ESP();
-  }
-  draw_BottomText("BT Connected");
-  display.display();
-
-  // ==== ELM327 init ====
-  draw_BottomText("ELM327 Init...");
-  display.display();
-  if (!myELM327.begin(SerialBT, false, 2000))
-  {
-    displayError("ELM327 INIT FAIL");
-    delay(10000);
-    restart_ESP();
-  }
-  draw_BottomText("ELM327 Connected");
-  display.display();
-
-  draw_BottomText("ELM327 Config...");
-  display.display();
-  myELM327.sendCommand(SET_ISO_BAUD_10400);
-  myELM327.sendCommand(ALLOW_LONG_MESSAGES);
-  draw_BottomText("ELM327 Config done");
-  display.display();
 
   startCaptivePortal();
   // ==== Web Server Routes ====
@@ -1148,6 +1061,122 @@ server.send(200, "text/plain", "Filesystem Updated. Rebooting...");
 delay(1000);
 ESP.restart(); }, handleFSUpload);
   server.begin();
+}
+// ==== Setup function ====
+void setup()
+{
+  // ==== Basic setup ====
+  Serial.begin(115200);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // ==== OLED init ====
+  display.init();
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(4, 8, "Fauwzk"); // Top left
+  display.drawString(32, 24, "Engineering");
+  draw_BottomText(version_string);
+  display.display();
+  delay(1000);
+  display.clear();
+  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
+  draw_BottomText("Starting...");
+  display.display();
+  delay(500);
+
+  // ==== EEPROM init ====
+  draw_BottomText("EEPROM Init");
+  display.display();
+  EEPROM.begin(EEPROM_SIZE);
+  draw_BottomText("EEPROM Init done");
+  display.display();
+
+  // ==== Load settings from EEPROM ====
+  draw_BottomText("Loading Settings...");
+  display.display();
+  loadValues();
+
+  draw_BottomText("Mounting FS...");
+  display.display();
+  if (!LittleFS.begin())
+  {
+    Serial.println("LittleFS mount failed!");
+    displayInfo("FS Error!");
+    restart_ESP();
+  }
+  draw_BottomText("FS mounted");
+  display.display();
+  Serial.println("LittleFS mounted successfully");
+
+  draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
+  display.display();
+
+  if (digitalRead(BUTTON_PIN) == LOW)
+  {
+    displayInfo("Setup Mode");
+    delay(2000);
+    startServer();
+    while (true)
+    {
+      if (digitalRead(BUTTON_PIN) == LOW)
+      {
+        displayInfo("Exiting Setup");
+        delay(1000);
+        restart_ESP();
+      }
+      server.handleClient();
+      dnsServer.processNextRequest();
+      drawHeartbeatSpinner();
+      display.display();
+      delay(10);
+    }
+  }
+  // ==== Connect to Classic Bluetooth ELM327 ====
+  if (!SerialBT.begin("CANuSEE", true))
+  { // true = master mode
+    draw_BottomText("BT INIT FAIL");
+    display.invertDisplay();
+    display.display();
+    delay(10000);
+    restart_ESP();
+  }
+  draw_BottomText("BT Init done");
+  display.display();
+  SerialBT.setPin(ELM327_BT_PIN);
+
+  // Connect to the paired device by MAC address
+  draw_BottomText("BT Connecting...");
+  display.display();
+  if (!SerialBT.connect(elm_address, sec_mask, role))
+  {
+    displayError("BT Conn FAIL");
+    delay(10000);
+    restart_ESP();
+  }
+  draw_BottomText("BT Connected");
+  display.display();
+
+  // ==== ELM327 init ====
+  draw_BottomText("ELM327 Init...");
+  display.display();
+  if (!myELM327.begin(SerialBT, false, 2000))
+  {
+    displayError("ELM327 INIT FAIL");
+    delay(10000);
+    restart_ESP();
+  }
+  draw_BottomText("ELM327 Connected");
+  display.display();
+
+  draw_BottomText("ELM327 Config...");
+  display.display();
+  myELM327.sendCommand(SET_ISO_BAUD_10400);
+  myELM327.sendCommand(ALLOW_LONG_MESSAGES);
+  draw_BottomText("ELM327 Config done");
+  display.display();
+
+  startServer();
   fadeTransition(screenIndex);
 }
 
