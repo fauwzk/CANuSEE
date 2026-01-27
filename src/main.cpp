@@ -939,16 +939,14 @@ void setup()
   display.setFont(ArialMT_Plain_16);
   display.drawString(4, 8, "Fauwzk"); // Top left
   display.drawString(32, 24, "Engineering");
+  draw_BottomText(version_string);
   display.display();
   delay(1000);
   display.clear();
   display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
-  draw_BottomText(version_string);
-  display.display();
-  delay(1000);
   draw_BottomText("Starting...");
   display.display();
-  delay(1000);
+  delay(500);
 
   // ==== EEPROM init ====
   draw_BottomText("EEPROM Init");
