@@ -67,7 +67,7 @@
         <h2>Firmware Update</h2>
         <form method="POST" action="/update" enctype="multipart/form-data">
             <input type="file" name="firmware">
-            <input type="submit" value="Upload Firmware">
+            <input type="submit" value="Upload firmware.elf">
         </form>
 
         <hr>
@@ -75,10 +75,9 @@
         <h2>LittleFS Update</h2>
         <form method="POST" action="/updatefs" enctype="multipart/form-data">
             <input type="file" name="filesystem">
-            <input type="submit" value="Upload Filesystem">
+            <input type="submit" value="Upload littlefs.bin">
         </form>
 
-        <p>Ensure you select the correct .bin file for each update.</p>
     </div>
 </body>
 
