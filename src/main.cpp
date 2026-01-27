@@ -9,6 +9,7 @@
 #include <FS.h>
 #include <DNSServer.h>
 #include "epd_bitmap_logo_3008.h"
+#include <Update.h>
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -925,6 +926,65 @@ server.send(302, "text/plain", ""); });
   server.begin();
 }
 
+// Serve update.html explicitly
+void handleUpdatePage()
+{
+  File file = LittleFS.open("/update.html", "r");
+  if (!file)
+  {
+    server.send(404, "text/plain", "update.html not found");
+    return;
+  }
+  server.streamFile(file, "text/html");
+  file.close();
+}
+
+void handleFirmwareUpload()
+{
+  HTTPUpload &upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START)
+  {
+    Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
+  }
+  else if (upload.status == UPLOAD_FILE_WRITE)
+  {
+    Update.write(upload.buf, upload.currentSize);
+  }
+  else if (upload.status == UPLOAD_FILE_END)
+  {
+    Update.end(true);
+  }
+}
+
+// ===== LittleFS OTA =====
+void handleFSUpload()
+{
+  HTTPUpload &upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START)
+  {
+    Serial.println("LittleFS Update Start");
+    Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS);
+    // U_FS targets the LittleFS partition automatically
+  }
+  else if (upload.status == UPLOAD_FILE_WRITE)
+  {
+    Update.write(upload.buf, upload.currentSize);
+  }
+  else if (upload.status == UPLOAD_FILE_END)
+  {
+    if (Update.end(true))
+    {
+      Serial.println("LittleFS Update Complete");
+    }
+    else
+    {
+      Serial.println("LittleFS Update Failed");
+    }
+  }
+}
+
 // ==== Setup function ====
 void setup()
 {
@@ -1073,6 +1133,20 @@ void setup()
     delay(1000);
     restart_ESP(); });
 
+  // Serve the update page
+  server.on("/update.html", HTTP_GET, handleUpdatePage);
+
+  server.on("/update", HTTP_POST, []()
+            {
+server.send(200, "text/plain", "Firmware Updated. Rebooting...");
+delay(1000);
+ESP.restart(); }, handleFirmwareUpload);
+
+  server.on("/updatefs", HTTP_POST, []()
+            {
+server.send(200, "text/plain", "Filesystem Updated. Rebooting...");
+delay(1000);
+ESP.restart(); }, handleFSUpload);
   server.begin();
   fadeTransition(screenIndex);
 }

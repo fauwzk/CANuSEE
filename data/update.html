@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>ESP32 OTA Update</title>
+</head>
+
+<body>
+    <h2>Firmware Update</h2>
+    <form method="POST" action="/update" enctype="multipart/form-data">
+        <input type="file" name="firmware">
+        <input type="submit" value="Upload Firmware">
+    </form>
+
+    <hr>
+
+    <h2>LittleFS Update</h2>
+    <form method="POST" action="/updatefs" enctype="multipart/form-data">
+        <input type="file" name="filesystem">
+        <input type="submit" value="Upload Filesystem">
+    </form>
+</body>
+
+</html>
