@@ -311,6 +311,62 @@ void draw_InfoText(String title, double value, String unit)
   display.display();
 }
 
+// ==== Draw Area Chart ====
+// Horizontal filled area from minValue to current value
+void draw_AreaChart(double value,
+                    double minValue,
+                    double maxValue,
+                    String label,
+                    String unit)
+{
+  // ---- Clamp value ----
+  if (value < minValue)
+    value = minValue;
+  if (value > maxValue)
+    value = maxValue;
+
+  // ---- Layout ----
+  const int chartX = 8;
+  const int chartY = 14;
+  const int chartWidth = 112;
+  const int chartHeight = 28;
+
+  // ---- Normalize value ----
+  double range = maxValue - minValue;
+  double norm = (value - minValue) / range;
+  int filledWidth = (int)(chartWidth * norm);
+
+  // ---- Draw frame ----
+  display.drawRect(chartX, chartY, chartWidth, chartHeight);
+
+  // ---- Draw filled area ----
+  display.fillRect(chartX, chartY, filledWidth, chartHeight);
+
+  // ---- Min / Max labels ----
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(chartX, chartY + chartHeight + 2, String(minValue, 1));
+
+  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.drawString(chartX + chartWidth, chartY + chartHeight + 2, String(maxValue, 1));
+
+  // ---- Center value text ----
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(
+      centerX,
+      chartY + (chartHeight / 2) - 8,
+      String(value, 2) + " " + unit);
+
+  // ---- Label top ----
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(centerX, 0, label);
+
+  // ---- Bottom info ----
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+}
+
 // ==== Tight & Clear Speedometer Gauge with Values ====
 void draw_SpeedoGauge(double value, double minValue, double maxValue, String label, String unit)
 {
@@ -721,7 +777,8 @@ void draw_TurboPressureLineScreen()
     turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
     turboPressure = turbo_pressure;
   }
-  draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
+  // draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
+  draw_AreaChart(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
 }
 
 void draw_TurboPressureTextScreen()
@@ -1150,9 +1207,12 @@ void setup()
   display.display();
   if (!SerialBT.connect(elm_address, sec_mask, role))
   {
-    displayError("BT Conn FAIL");
-    delay(10000);
-    restart_ESP();
+    if (!SerialBT.connect("ELMULATOR"))
+    {
+      displayError("BT Conn FAIL");
+      delay(10000);
+      restart_ESP();
+    }
   }
   draw_BottomText("BT Connected");
   display.display();
