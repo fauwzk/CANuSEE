@@ -25,13 +25,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
       - name: Get short SHA
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
-
+      - name: Clean previous build
+        run: pio run -t clean
+      
       - name: Build firmware
         run: pio run
 
