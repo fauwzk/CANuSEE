@@ -34,13 +34,13 @@ jobs:
 
       - name: Get short SHA 2
         id: sha2
-        run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: echo "git_sha=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Clean previous build
         run: pio run -t clean
       
       - name: Build firmware
-        run: pio run -e esp32dev
+        run: pio run -e esp32dev -v
 
       - name: Build LittleFS
         run: pio run -t buildfs
