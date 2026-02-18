@@ -10,6 +10,7 @@
 #include <DNSServer.h>
 #include "epd_bitmap_logo_3008.h"
 #include <ElegantOTA.h>
+#include "version.h"
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -57,10 +58,6 @@ float dashCoolant = 0;
 float dashLoad = 0;
 
 // ==== Version ====
-
-#ifndef FW_VERSION
-#define FW_VERSION "dev" // valeur par défaut
-#endif
 
 String version_string = "CANuSEE " FW_VERSION;
 

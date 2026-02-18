@@ -1,14 +1,13 @@
-# extra_scripts/set_version.py
 Import("env")
 import os
+from pathlib import Path
 
 git_sha = os.getenv("GIT_SHA", "dev")
-print(f"Injecting FW_VERSION={git_sha}")
 
-# Append to CPPDEFINES so it's visible in Arduino code
-env.Append(
-    CPPDEFINES=[("FW_VERSION", f'"{git_sha}"')]
+version_h = Path(env.subst("$PROJECT_SRC_DIR")) / "version.h"
+
+version_h.write_text(
+    f'#pragma once\n#define FW_VERSION "{git_sha}"\n'
 )
 
-# Optional: debug output
-print("Current CPPDEFINES:", env.get("CPPDEFINES", []))
+print(f"Generated FW_VERSION={git_sha}")
