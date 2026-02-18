@@ -49,7 +49,8 @@ jobs:
           cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
           
       - name: Create zip release
-        run: cd release
+        run: |
+          cd release
           zip firm_fs-${{ steps.sha.outputs.short }}.zip firmware-${{ steps.sha.outputs.short }}.elf littlefs-${{ steps.sha.outputs.short }}.bin
 
       - name: Create GitHub Release
