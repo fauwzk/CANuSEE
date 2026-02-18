@@ -57,8 +57,12 @@ float dashCoolant = 0;
 float dashLoad = 0;
 
 // ==== Version ====
-String version = "v1.0b";
-String version_string = "CANuSEE " + version;
+
+#ifndef FW_VERSION
+#define FW_VERSION "dev" // valeur par défaut si CI non utilisé
+#endif
+
+String version_string = "CANuSEE v" FW_VERSION;
 
 // ==== OLED ====
 SSD1306Wire display(0x3C, 21, 22); // SDA=21, SCL=22
@@ -178,7 +182,7 @@ String generateWebPage()
   // Replace placeholders
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
-  html.replace("%VERSION%", version);
+  html.replace("%VERSION%", version_string);
   html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
   html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
