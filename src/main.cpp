@@ -57,7 +57,7 @@ float dashCoolant = 0;
 float dashLoad = 0;
 
 // ==== Version ====
-String version = "v0.9";
+String version = "v1.0b";
 String version_string = "CANuSEE " + version;
 
 // ==== OLED ====
