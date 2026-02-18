@@ -8,8 +8,9 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <DNSServer.h>
-#include "epd_bitmap_logo_3008.h"
-#include <Update.h>
+// #include "epd_bitmap_logo_3008.h"
+// #include <Update.h>
+#include <ElegantOTA.h>
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -1107,10 +1108,11 @@ void startServer()
     delay(1000);
     restart_ESP(); });
 
-  // Serve the update page
-  server.on("/update.html", HTTP_GET, handleUpdatePage);
+  /*
+// Serve the update page
+server.on("/update.html", HTTP_GET, handleUpdatePage);
 
-  server.on("/update", HTTP_POST, []()
+   server.on("/update", HTTP_POST, []()
             {
 server.send(200, "text/plain", "Firmware Updated. Rebooting...");
 delay(1000);
@@ -1120,7 +1122,9 @@ ESP.restart(); }, handleFirmwareUpload);
             {
 server.send(200, "text/plain", "Filesystem Updated. Rebooting...");
 delay(1000);
-ESP.restart(); }, handleFSUpload);
+ESP.restart(); }, handleFSUpload); */
+
+  ElegantOTA.begin(&server); // Start ElegantOTA
   server.begin();
 }
 // ==== Setup function ====
@@ -1141,7 +1145,7 @@ void setup()
   display.display();
   delay(1000);
   display.clear();
-  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
+  // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText("Starting...");
   display.display();
   delay(500);
@@ -1187,6 +1191,7 @@ void setup()
         restart_ESP();
       }
       server.handleClient();
+      ElegantOTA.loop();
       dnsServer.processNextRequest();
       drawHeartbeatSpinner();
       display.display();
@@ -1248,6 +1253,7 @@ void setup()
 void loop()
 {
   server.handleClient();
+  ElegantOTA.loop();
   dnsServer.processNextRequest();
 
   static bool buttonPressed = false;
