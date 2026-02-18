@@ -36,7 +36,7 @@ jobs:
         run: pio run -t clean
       
       - name: Build firmware
-        run: pio run --environment esp32dev
+        run: pio run -e esp32dev -D FW_VERSION=\"${{ steps.sha.outputs.short }}\"
 
       - name: Build LittleFS
         run: pio run -t buildfs
