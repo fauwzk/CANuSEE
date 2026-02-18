@@ -26,8 +26,14 @@ jobs:
       - name: Build LittleFS
         run: pio run -t buildfs
 
-      - name: Upload firmware
+      - name: Collect artifacts
+        run: |
+          mkdir artifacts
+          cp .pio/build/**/firmware.elf artifacts/firmware-${{ github.sha }}.elf
+          cp .pio/build/**/littlefs.bin artifacts/littlefs-${{ github.sha }}.bin
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
-          path: .pio/build
+          name: firmware-${{ github.sha }}
+          path: artifacts
