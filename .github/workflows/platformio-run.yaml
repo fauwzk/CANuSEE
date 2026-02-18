@@ -29,10 +29,6 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Patch main.cpp version
-        run: |
-          sed -i 's/#define FW_VERSION ".*"/#define FW_VERSION "${{ steps.sha.outputs.short }}"/' src/main.cpp
-
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
@@ -45,7 +41,6 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir -p release
-          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
           cp .pio/build/**/firmware.elf release/firmware-${{ steps.sha.outputs.short }}.elf
           cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
           

@@ -59,10 +59,10 @@ float dashLoad = 0;
 // ==== Version ====
 
 #ifndef FW_VERSION
-#define FW_VERSION "dev" // valeur par défaut si CI non utilisé
+#define FW_VERSION "dev" // valeur par défaut
 #endif
 
-String version_string = "CANuSEE v" FW_VERSION;
+String version_string = "CANuSEE " FW_VERSION;
 
 // ==== OLED ====
 SSD1306Wire display(0x3C, 21, 22); // SDA=21, SCL=22
