@@ -30,10 +30,10 @@ jobs:
 
       - name: Get short SHA
         id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Get short SHA for prog
-        id: sha2
+      - name: Get short SHA 2
+        id: sha
         run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Clean previous build
@@ -48,8 +48,8 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir -p release
-          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
-          cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
+          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.GIT_SHA }}.bin
+          cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.GIT_SHA }}.bin
           
       - name: Create zip release
         run: |
