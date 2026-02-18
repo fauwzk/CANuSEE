@@ -32,6 +32,10 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Get short SHA for prog
+        id: sha2
+        run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
       - name: Clean previous build
         run: pio run -t clean
       
