@@ -8,8 +8,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <DNSServer.h>
-// #include "epd_bitmap_logo_3008.h"
-// #include <Update.h>
+#include "epd_bitmap_logo_3008.h"
 #include <ElegantOTA.h>
 
 // ==== WiFi Config ====
@@ -1145,7 +1144,7 @@ void setup()
   display.display();
   delay(1000);
   display.clear();
-  // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
+  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText("Starting...");
   display.display();
   delay(500);

@@ -44,13 +44,13 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir -p release
-          cp .pio/build/**/firmware.elf release/firmware-${{ steps.sha.outputs.short }}.elf
+          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
           cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
           
       - name: Create zip release
         run: |
           cd release
-          zip firm_fs-${{ steps.sha.outputs.short }}.zip firmware-${{ steps.sha.outputs.short }}.elf firmware-${{ steps.sha.outputs.short }}.bin littlefs-${{ steps.sha.outputs.short }}.bin
+          zip firm_fs-${{ steps.sha.outputs.short }}.zip firmware-${{ steps.sha.outputs.short }}.bin littlefs-${{ steps.sha.outputs.short }}.bin
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
