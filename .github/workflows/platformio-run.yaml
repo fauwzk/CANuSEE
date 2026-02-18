@@ -1,39 +1,51 @@
 name: PlatformIO CI
 
-on: [push]
+on:
+  push:
+    branches: [ main ]   # adjust if needed
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
-      - uses: actions/setup-python@v6
+
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install PlatformIO Core
+
+      - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      - name: Build PlatformIO Project
+      - name: Build firmware
         run: pio run
-      
+
       - name: Build LittleFS
         run: pio run -t buildfs
 
-      - name: Collect artifacts
-        run: |
-          mkdir artifacts
-          cp .pio/build/**/firmware.elf artifacts/firmware-${{ github.sha }}.elf
-          cp .pio/build/**/littlefs.bin artifacts/littlefs-${{ github.sha }}.bin
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Prepare artifacts
+        run: |
+          mkdir release
+          cp .pio/build/**/firmware.elf release/firmware-${{ steps.sha.outputs.short }}.elf
+          cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: firmware-${{ github.sha }}
-          path: artifacts
+          tag_name: ${{ steps.sha.outputs.short }}
+          name: Build ${{ steps.sha.outputs.short }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
