@@ -1,5 +1,6 @@
 Import("env")
 import os
+from datetime import datetime
 from pathlib import Path
 
 # Read SHA from environment (GitHub Actions or local fallback)
