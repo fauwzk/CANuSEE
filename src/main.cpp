@@ -311,59 +311,152 @@ void draw_InfoText(String title, double value, String unit)
   }
   display.display();
 }
+// ==== Area Chart History Buffer ====
+#define AREA_CHART_HISTORY 105 // Number of points to store (match chart width)
 
-// ==== Draw Area Chart ====
-// Horizontal filled area from minValue to current value
-void draw_AreaChart(double value,
-                    double minValue,
-                    double maxValue,
-                    String label,
-                    String unit)
+struct AreaChartData
 {
-  // ---- Clamp value ----
+  double values[AREA_CHART_HISTORY];
+  uint8_t currentIndex;
+  bool initialized;
+};
+
+String alignSign(String value)
+{
+  if (!value.startsWith("-"))
+  {
+    return " " + value; // Ajoute un espace si pas de "-"
+  }
+  return value;
+}
+
+// ==== Helper function to format decimal numbers without rounding ====
+String formatDecimal(double value, uint8_t decimals)
+{
+  // Handle sign
+  String result = (value < 0) ? "-" : "";
+  value = abs(value);
+
+  // Integer part
+  result += String((int)value);
+  result += ".";
+
+  // Decimal part
+  double decPart = value - (int)value;
+  for (int i = 0; i < decimals; i++)
+  {
+    decPart *= 10;
+    int digit = (int)decPart;
+    result += String(digit);
+    decPart -= digit;
+  }
+
+  return result;
+}
+
+AreaChartData turboHistory = {{0}, 0, false};
+
+// ==== Add value to history ====
+void addValueToHistory(AreaChartData &history, double value, double minValue, double maxValue)
+{
+  // Clamp value
   if (value < minValue)
     value = minValue;
   if (value > maxValue)
     value = maxValue;
 
-  // ---- Layout ----
-  const int chartX = 8;
-  const int chartY = 14;
-  const int chartWidth = 112;
-  const int chartHeight = 28;
+  // Add value at current index
+  history.values[history.currentIndex] = value;
 
-  // ---- Normalize value ----
-  double range = maxValue - minValue;
-  double norm = (value - minValue) / range;
-  int filledWidth = (int)(chartWidth * norm);
+  // Move to next position
+  history.currentIndex = (history.currentIndex + 1) % AREA_CHART_HISTORY;
 
-  // ---- Draw frame ----
+  // Mark as initialized after first full cycle
+  if (history.currentIndex == 0)
+    history.initialized = true;
+}
+
+// Draws a curve chart with historical data
+// Value displayed inside the graph with text color inverted based on background
+void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue,
+                               double maxValue, String label, String unit)
+{
+  // Add new value to history
+  addValueToHistory(history, newValue, minValue, maxValue);
+
+  // Chart layout - shifted right to make room for label
+  int chartX = 20;
+  int chartY = 12;
+  int chartWidth = AREA_CHART_HISTORY; // Reduced from AREA_CHART_HISTORY (108)
+  int chartHeight = 35;                // Reduced from 35
+  int baseY = chartY + chartHeight;
+  int labelX = 0; // Left position for label
+
+  // ==== Draw outline ====
   display.drawRect(chartX, chartY, chartWidth, chartHeight);
 
-  // ---- Draw filled area ----
-  display.fillRect(chartX, chartY, filledWidth, chartHeight);
-
-  // ---- Min / Max labels ----
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(chartX, chartY + chartHeight + 2, String(minValue, 1));
-
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(chartX + chartWidth, chartY + chartHeight + 2, String(maxValue, 1));
-
-  // ---- Center value text ----
+  // ==== Draw label at top ====
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(
-      centerX,
-      chartY + (chartHeight / 2) - 8,
-      String(value, 2) + " " + unit);
-
-  // ---- Label top ----
   display.setFont(ArialMT_Plain_10);
   display.drawString(centerX, 0, label);
 
-  // ---- Bottom info ----
+  // ==== Draw area chart curve ====
+  double range = maxValue - minValue;
+
+  // Draw filled area under curve
+  for (int i = 0; i < chartWidth; i++)
+  {
+    // Get index in history buffer
+    int historyIdx = history.currentIndex + i;
+    if (!history.initialized && i >= history.currentIndex)
+      break; // Don't draw beyond initialized data
+
+    historyIdx = historyIdx % AREA_CHART_HISTORY;
+
+    double val = history.values[historyIdx];
+
+    // Clamp to range
+    if (val < minValue)
+      val = minValue;
+    if (val > maxValue)
+      val = maxValue;
+
+    // Calculate pixel height
+    double normalizedVal = (val - minValue) / range;
+    int pixelHeight = (int)(chartHeight * normalizedVal);
+    int pixelY = baseY - pixelHeight;
+
+    // Draw vertical line from base to point (creates filled area)
+    display.drawLine(chartX + i, baseY, chartX + i, pixelY);
+  }
+
+  // ==== Draw min/max/value labels aligned to chart ====
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+
+  // Positions verticales
+  int maxLabelY = chartY - 3;
+  int minLabelY = baseY - 10;
+
+  // Draw MAX (collé au graphique)
+  display.drawString(labelX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
+
+  // Draw MIN (collé au graphique)
+  display.drawString(labelX, minLabelY, alignSign(formatDecimal(minValue, 1)));
+
+  // ==== Draw value centered between min & max (no unit) ====
+  int textHeight = 10; // ArialMT_Plain_10 ≈ 10px
+
+  // ==== Draw value centered BETWEEN MIN and MAX ====
+  int maxCenterY = maxLabelY + textHeight / 2; // centre visuel de max
+  int minCenterY = minLabelY + textHeight / 2; // centre visuel de min
+
+  int valueCenterY = (maxCenterY + minCenterY) / 2; // milieu entre les centres
+  int textPosY = valueCenterY - textHeight / 2;     // position coin supérieur gauche pour drawString
+
+  display.drawString(labelX, textPosY, alignSign(formatDecimal(newValue, 1)));
+
+  // ==== Bottom info ====
   draw_BottomText(version_string);
   draw_ScreenNumber(screenIndex);
 }
@@ -779,7 +872,7 @@ void draw_TurboPressureLineScreen()
     turboPressure = turbo_pressure;
   }
   // draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
-  draw_AreaChart(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
+  draw_AreaChartWithHistory(turboHistory, turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
 }
 
 void draw_TurboPressureTextScreen()
