@@ -1228,13 +1228,14 @@ void setup()
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_16);
-  display.drawString(4, 8, "Fauwzk"); // Top left
-  display.drawString(32, 24, "Engineering");
+  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
+  // display.drawString(4, 8, "Fauwzk"); // Top left
+  // display.drawString(32, 24, "Engineering");
   draw_BottomText(version_string);
   display.display();
   delay(1000);
-  display.clear();
-  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
+  // display.clear();
+  // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText("Starting...");
   display.display();
   delay(500);
@@ -1308,7 +1309,7 @@ void setup()
     if (!SerialBT.connect("ELMULATOR"))
     {
       displayError("BT Conn FAIL");
-      delay(10000);
+      delay(5000);
       restart_ESP();
     }
   }
