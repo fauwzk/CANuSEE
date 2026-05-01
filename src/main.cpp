@@ -1222,10 +1222,12 @@ void setup()
   // ==== Basic setup ====
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-
+  delay(500); // Allow time for serial to initialize
+  Serial.println("\n\n=== Starting CANuSEE ===");
   // ==== OLED init ====
   display.init();
   display.clear();
+  display.setBrightness(0); // Start with backlight off for fade-in effect
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_16);
   display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
@@ -1233,7 +1235,13 @@ void setup()
   // display.drawString(32, 24, "Engineering");
   draw_BottomText(version_string);
   display.display();
-  delay(1000);
+  // ==== Fade in effect ====
+  for (int b = 0; b <= 255; b += 25)
+  {
+    display.setBrightness(b);
+    delay(30);
+  }
+  delay(500);
   // display.clear();
   // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText("Starting...");
