@@ -71,6 +71,12 @@ uint8_t screenIndex = 0;
 uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
 
+// ==== Menu Variables ====
+bool inMenu = false;
+uint8_t menuCursor = 0;
+const char *menuItems[] = {"MAF Pressure", "Turbo Boost", "Intake Temp", "Engine Load", "Battery Volt", "Coolant Temp", "DTC Codes", "Dashboard"};
+const int numMenuItems = 8;
+
 // ==== Default Turbo gauge limits ====
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
@@ -707,6 +713,48 @@ void setup()
     fadeTransition(screenIndex);
 }
 
+void drawMenuScreen()
+{
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(12, "SELECT SCREEN");
+    u8g2.drawLine(0, 14, 128, 14);
+
+    u8g2.setFont(u8g2_font_helvB08_tr);
+
+    // Logic to only show 4 items at a time and scroll
+    int visibleItems = 4;
+    int startIdx = 0;
+    if (menuCursor >= visibleItems)
+    {
+        startIdx = menuCursor - visibleItems + 1;
+    }
+
+    // Draw the visible list items
+    for (int i = 0; i < visibleItems; i++)
+    {
+        int itemIdx = startIdx + i;
+        if (itemIdx >= numMenuItems)
+            break;
+
+        int yPos = 28 + (i * 12); // Spacing between items
+
+        // Highlight the selected item
+        if (itemIdx == menuCursor)
+        {
+            u8g2.setDrawColor(1);
+            u8g2.drawBox(4, yPos - 10, 120, 12); // Draw highlight box
+            u8g2.setDrawColor(0);                // Set text color to black for contrast
+        }
+        else
+        {
+            u8g2.setDrawColor(1); // Normal white text
+        }
+
+        drawStringCenter(yPos, menuItems[itemIdx]);
+        u8g2.setDrawColor(1); // Reset to white for the next loop iteration
+    }
+}
+
 // ==== Main Loop ====
 void loop()
 {
@@ -722,11 +770,43 @@ void loop()
 
     if (buttonState && !buttonPressed)
     {
+        // Button just went down
         buttonPressed = true;
         buttonPressTime = millis();
         longPressHandled = false;
     }
 
+    // ==== HANDLE LONG PRESS ====
+    if (buttonPressed && !longPressHandled)
+    {
+        if (millis() - buttonPressTime > longPressDuration)
+        {
+            longPressHandled = true;
+
+            if (!inMenu)
+            {
+                // We are in gauges. LONG PRESS opens the menu.
+                inMenu = true;
+                menuCursor = screenIndex; // Start cursor on current screen
+            }
+            else
+            {
+                // We are in the menu. LONG PRESS selects the item.
+                screenIndex = menuCursor;
+                inMenu = false;
+
+                // Save new screen to EEPROM
+                cfg.last_screen = screenIndex;
+                EEPROM.put(0, cfg);
+                EEPROM.commit();
+
+                // Add a small fade effect when leaving menu
+                fadeTransition(screenIndex);
+            }
+        }
+    }
+
+    // ==== HANDLE SHORT PRESS ====
     if (!buttonState && buttonPressed)
     {
         unsigned long pressDuration = millis() - buttonPressTime;
@@ -734,72 +814,59 @@ void loop()
 
         if (pressDuration < longPressDuration && (millis() - lastButtonPress) > debounceDelay)
         {
-            // SHORT PRESS (Next Screen)
             lastButtonPress = millis();
-            myELM327.response = 0;
-            delay(100);
-            screenIndex = (screenIndex + 1) % screenNumbers;
-            fadeTransition(screenIndex);
-            cfg.last_screen = screenIndex;
-            EEPROM.put(0, cfg);
-            EEPROM.commit();
-            lastSwitch = millis();
-        }
-    }
 
-    if (buttonPressed && !longPressHandled)
-    {
-        if (millis() - buttonPressTime > longPressDuration)
-        {
-            // LONG PRESS (Toggle specific mode)
-            if (screenIndex == 1)
+            if (inMenu)
             {
-                BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
-                cfg.boost_screen_type = BOOST_SCREEN;
-            }
-            else if (screenIndex == 3)
-            {
-                ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
-                cfg.engload_screen_type = ENGLOAD_SCREEN;
-            }
-            else if (screenIndex == 4)
-            {
-                BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
-                cfg.battery_screen_type = BATTERY_SCREEN;
-            }
-            else if (screenIndex == 5)
-            {
-                COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
-                cfg.coolant_screen_type = COOLANT_SCREEN;
-            }
-            else if (screenIndex == 6)
-            {
-                resetDTCs();
+                // We are in the menu. SHORT PRESS scrolls down.
+                menuCursor = (menuCursor + 1) % numMenuItems;
             }
             else
             {
-                displayInfo("Rebooting...");
-                delay(1000);
-                restart_ESP();
-            }
+                // We are in gauges. SHORT PRESS toggles Text/Gauge type.
+                if (screenIndex == 1)
+                {
+                    BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
+                    cfg.boost_screen_type = BOOST_SCREEN;
+                }
+                else if (screenIndex == 3)
+                {
+                    ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
+                    cfg.engload_screen_type = ENGLOAD_SCREEN;
+                }
+                else if (screenIndex == 4)
+                {
+                    BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
+                    cfg.battery_screen_type = BATTERY_SCREEN;
+                }
+                else if (screenIndex == 5)
+                {
+                    COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
+                    cfg.coolant_screen_type = COOLANT_SCREEN;
+                }
+                else if (screenIndex == 6)
+                {
+                    resetDTCs(); // Short press on DTC screen resets them
+                }
 
-            EEPROM.put(0, cfg);
-            EEPROM.commit();
-            longPressHandled = true;
-
-            // Force instant redraw of toggled screen
-            if (screenIndex != 6)
-            {
-                u8g2.clearBuffer();
-                draw_GaugeScreen(screenIndex);
-                u8g2.sendBuffer();
+                EEPROM.put(0, cfg);
+                EEPROM.commit();
             }
         }
     }
 
+    // ==== DRAW THE CORRECT SCREEN ====
     u8g2.clearBuffer();
-    draw_GaugeScreen(screenIndex);
-    u8g2.sendBuffer();
 
-    delay(10);
+    if (inMenu)
+    {
+        drawMenuScreen();
+    }
+    else
+    {
+        draw_GaugeScreen(screenIndex);
+    }
+
+    u8g2.sendBuffer();
+    delay(1);
 }
