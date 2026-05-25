@@ -1,63 +1,39 @@
-name: PlatformIO CI
-
-on:
-  push:
-    branches: [ main ]
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.platformio/.cache
-          key: ${{ runner.os }}-pio
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
-
-      - name: Get short SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Get short SHA
-        run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-
-      - name: Clean previous build
-        run: pio run -t clean
-      
-      - name: Build firmware
-        run: pio run -e esp32dev -v
-
-      - name: Build LittleFS
-        run: pio run -t buildfs
-
-      - name: Prepare release artifacts
+- name: Send Discord Webhook
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
-          mkdir -p release
-          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
-          cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
-          
-      - name: Create zip release
-        run: |
-          cd release
-          zip firm_fs-${{ steps.sha.outputs.short }}.zip firmware-${{ steps.sha.outputs.short }}.bin littlefs-${{ steps.sha.outputs.short }}.bin
+          # 1. Construct the predictable GitHub Release URLs
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.sha.outputs.short }}"
+          FW_URL="$BASE_URL/firmware-${{ steps.sha.outputs.short }}.bin"
+          FS_URL="$BASE_URL/littlefs-${{ steps.sha.outputs.short }}.bin"
+          ZIP_URL="$BASE_URL/firm_fs-${{ steps.sha.outputs.short }}.zip"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.sha.outputs.short }}
-          name: Build ${{ steps.sha.outputs.short }}
-          files: release/*
+          # 2. Fire the cURL request to Discord
+          curl -H "Content-Type: application/json" \
+               -d "{
+                 \"username\": \"GitHub Actions\",
+                 \"avatar_url\": \"https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png\",
+                 \"embeds\": [{
+                   \"title\": \"🚀 New ESP32 Build Ready: ${{ steps.sha.outputs.short }}\",
+                   \"color\": 5814783,
+                   \"description\": \"The latest firmware and filesystem binaries have been compiled and attached to the release.\",
+                   \"fields\": [
+                     {
+                       \"name\": \"Firmware\",
+                       \"value\": \"[⬇️ Download Firmware.bin]($FW_URL)\",
+                       \"inline\": true
+                     },
+                     {
+                       \"name\": \"LittleFS\",
+                       \"value\": \"[⬇️ Download LittleFS.bin]($FS_URL)\",
+                       \"inline\": true
+                     },
+                     {
+                       \"name\": \"Archive\",
+                       \"value\": \"[📦 Download ZIP]($ZIP_URL)\",
+                       \"inline\": false
+                     }
+                   ]
+                 }]
+               }" \
+               $DISCORD_WEBHOOK

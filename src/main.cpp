@@ -89,7 +89,7 @@ float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 // ==== Timer State ====
 bool timerRunning = false;
 bool timerReady = false;
-unsigned long timerStart = 0;
+unsigned long speedTimerStart = 0; // Renamed to avoid ESP32 conflict
 float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
@@ -532,20 +532,20 @@ void draw_GaugeScreen(uint8_t index)
             else if (timerReady && !timerRunning && currentSpeed > 0)
             {
                 timerRunning = true;
-                timerStart = millis();
+                speedTimerStart = millis(); // <-- Updated
             }
             else if (timerRunning && currentSpeed >= TARGET_SPEED)
             {
                 timerRunning = false;
                 timerReady = false;
-                lastTimerValue = (millis() - timerStart) / 1000.0;
+                lastTimerValue = (millis() - speedTimerStart) / 1000.0; // <-- Updated
             }
         }
 
         float displayTime = lastTimerValue;
         if (timerRunning)
         {
-            displayTime = (millis() - timerStart) / 1000.0;
+            displayTime = (millis() - speedTimerStart) / 1000.0; // <-- Updated
         }
 
         draw_BottomText(version_string);
