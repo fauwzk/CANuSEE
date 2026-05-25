@@ -74,7 +74,7 @@ uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 
 // ==== Coordinates & State ====
 const int centerX = 64;
-const int screenNumbers = 9; // Increased for the timer screen
+const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
@@ -89,7 +89,7 @@ float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 // ==== Timer State ====
 bool timerRunning = false;
 bool timerReady = false;
-unsigned long speedTimerStart = 0; // Renamed to avoid ESP32 conflict
+unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
@@ -179,13 +179,14 @@ void restart_ESP()
 // ==== UI Draw Helpers ====
 void draw_BottomText(String text)
 {
+    // Updated to exactly cover the bottom 16 pixels (Y=48 to 64) for Bi-Color screens
     u8g2.setFont(u8g2_font_helvR08_tr);
     u8g2.setDrawColor(1);
-    u8g2.drawFrame(0, 54, 128, 10);
+    u8g2.drawFrame(0, 48, 128, 16);
     u8g2.setDrawColor(0);
-    u8g2.drawBox(1, 55, 126, 8);
+    u8g2.drawBox(1, 49, 126, 14);
     u8g2.setDrawColor(1);
-    drawStringCenter(63, text);
+    drawStringCenter(60, text);
 }
 
 void displayInfo(String msg)
@@ -209,7 +210,7 @@ void displayError(String msg)
 void draw_ScreenNumber(uint8_t index)
 {
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringLeft(0, 63, String(index + 1) + "/" + String(screenNumbers));
+    drawStringLeft(2, 60, String(index + 1) + "/" + String(screenNumbers));
 }
 
 void draw_InfoText(String title, double value, String unit)
@@ -220,7 +221,7 @@ void draw_InfoText(String title, double value, String unit)
     drawStringCenter(16, title);
     u8g2.setFont(u8g2_font_helvR18_tr);
     String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
-    drawStringCenter(44, valStr + " " + unit);
+    drawStringCenter(40, valStr + " " + unit); // Nudged up slightly
 }
 
 // ==== Dynamic Menu Builder ====
@@ -282,8 +283,8 @@ void buildMenu()
 void drawMenuScreen()
 {
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(12, "MENU");
-    u8g2.drawLine(0, 14, 128, 14);
+    drawStringCenter(10, "MENU");
+    u8g2.drawLine(0, 12, 128, 12);
 
     u8g2.setFont(u8g2_font_helvR08_tr);
     int visibleItems = 3;
@@ -293,17 +294,18 @@ void drawMenuScreen()
         startIdx = menuCursor - visibleItems + 1;
     }
 
+    // Tightly packed so 3 items fit above Y=48
     for (int i = 0; i < visibleItems; i++)
     {
         int itemIdx = startIdx + i;
         if (itemIdx >= menuSize)
             break;
 
-        int yPos = 28 + (i * 12);
+        int yPos = 24 + (i * 11);
         if (itemIdx == menuCursor)
         {
             u8g2.setDrawColor(1);
-            u8g2.drawBox(2, yPos - 10, 124, 12);
+            u8g2.drawBox(2, yPos - 9, 124, 11);
             u8g2.setDrawColor(0);
         }
         else
@@ -319,14 +321,15 @@ void drawMenuScreen()
 void drawEditScreen(String title, String valueStr, String instruction)
 {
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(20, title);
+    drawStringCenter(16, title);
     u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(45, valueStr);
+    drawStringCenter(38, valueStr);
     draw_BottomText(instruction);
 }
 
 // ==== History Buffers & Gauge Drawing ====
-#define AREA_CHART_HISTORY 105
+// Reduced width to 94 to allow 32 pixels for side labels (fits "999.9")
+#define AREA_CHART_HISTORY 94
 struct AreaChartData
 {
     double values[AREA_CHART_HISTORY];
@@ -364,7 +367,14 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     if (history.currentIndex == 0)
         history.initialized = true;
 
-    int chartX = 20, chartY = 12, chartWidth = AREA_CHART_HISTORY, chartHeight = 35, baseY = chartY + chartHeight, labelX = 0;
+    // Shifted chart 32 pixels right to make room for long labels
+    int chartX = 32;
+    int chartY = 12;
+    int chartWidth = AREA_CHART_HISTORY;
+    int chartHeight = 32; // Fit above the 48px yellow bar
+    int baseY = chartY + chartHeight;
+    int labelX = 0;
+
     u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(10, label);
@@ -381,10 +391,15 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
         u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
     }
 
-    int maxLabelY = chartY + 8, minLabelY = baseY;
+    // Perfectly centered side labels
+    int maxLabelY = chartY + 8;                      // Touches absolute top
+    int minLabelY = baseY;                           // Touches absolute bottom
+    int valCenterY = chartY + (chartHeight / 2) + 4; // Absolute middle
+
     drawStringLeft(labelX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
     drawStringLeft(labelX, minLabelY, alignSign(formatDecimal(minValue, 1)));
-    drawStringLeft(labelX, (maxLabelY + minLabelY) / 2 + 4, alignSign(formatDecimal(newValue, 1)));
+    drawStringLeft(labelX, valCenterY, alignSign(formatDecimal(newValue, 1)));
+
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
 }
@@ -511,10 +526,10 @@ void draw_GaugeScreen(uint8_t index)
         drawStringLeft(0, 22, String(dashBoost, 2) + " bar");
         drawStringLeft(64, 12, "IAT:");
         drawStringLeft(64, 22, String(dashIAT, 1) + " C");
-        drawStringLeft(0, 34, "COOL:");
-        drawStringLeft(0, 44, String(dashCoolant, 1) + " C");
-        drawStringLeft(64, 34, "LOAD:");
-        drawStringLeft(64, 44, String(dashLoad, 1) + " %");
+        drawStringLeft(0, 32, "COOL:");
+        drawStringLeft(0, 42, String(dashCoolant, 1) + " C");
+        drawStringLeft(64, 32, "LOAD:");
+        drawStringLeft(64, 42, String(dashLoad, 1) + " %");
         draw_BottomText(version_string);
         draw_ScreenNumber(screenIndex);
         break;
@@ -532,40 +547,40 @@ void draw_GaugeScreen(uint8_t index)
             else if (timerReady && !timerRunning && currentSpeed > 0)
             {
                 timerRunning = true;
-                speedTimerStart = millis(); // <-- Updated
+                speedTimerStart = millis();
             }
             else if (timerRunning && currentSpeed >= TARGET_SPEED)
             {
                 timerRunning = false;
                 timerReady = false;
-                lastTimerValue = (millis() - speedTimerStart) / 1000.0; // <-- Updated
+                lastTimerValue = (millis() - speedTimerStart) / 1000.0;
             }
         }
 
         float displayTime = lastTimerValue;
         if (timerRunning)
         {
-            displayTime = (millis() - speedTimerStart) / 1000.0; // <-- Updated
+            displayTime = (millis() - speedTimerStart) / 1000.0;
         }
 
         draw_BottomText(version_string);
         draw_ScreenNumber(screenIndex);
 
         u8g2.setFont(u8g2_font_helvR12_tr);
-        drawStringCenter(16, "0 - " + String(TARGET_SPEED) + " km/h");
+        drawStringCenter(14, "0 - " + String(TARGET_SPEED) + " km/h");
 
         u8g2.setFont(u8g2_font_helvR18_tr);
         if (timerReady && !timerRunning && displayTime == 0.0)
         {
-            drawStringCenter(40, "READY");
+            drawStringCenter(36, "READY");
         }
         else
         {
-            drawStringCenter(40, String(displayTime, 2) + " s");
+            drawStringCenter(36, String(displayTime, 2) + " s");
         }
 
         u8g2.setFont(u8g2_font_helvR08_tr);
-        drawStringCenter(52, "Speed: " + String((int)currentSpeed) + " km/h");
+        drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
         break;
     }
 }
@@ -596,6 +611,7 @@ void setup()
     delay(500);
 
     u8g2.begin();
+    u8g2.setBusClock(400000); // <--- ADD THIS LINE FOR FASTER RENDERING
     u8g2.clearBuffer();
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
     draw_BottomText(version_string);
@@ -654,6 +670,7 @@ void loop()
     static unsigned long pressStartTime = 0;
     static bool longPressTriggered = false;
 
+    // 1. Check Button instantly (no longer blocked by the screen)
     int reading = digitalRead(BUTTON_PIN);
     if (reading != lastButtonState)
     {
@@ -699,8 +716,8 @@ void loop()
                     else if (currentState == STATE_EDIT_SPEED)
                     {
                         TARGET_SPEED += 10;
-                        if (TARGET_SPEED > 200)
-                            TARGET_SPEED = 30; // Rollover to 30km/h
+                        if (TARGET_SPEED > 150)
+                            TARGET_SPEED = 40;
                     }
                 }
             }
@@ -777,29 +794,34 @@ void loop()
     }
     lastButtonState = reading;
 
-    // ==== Screen Drawing Router ====
-    u8g2.clearBuffer();
-    if (currentState == STATE_GAUGES)
+    // ==== 2. Rate-Limited Screen Drawing Router (20 FPS) ====
+    static unsigned long lastDrawTime = 0;
+    if (millis() - lastDrawTime > 50)
     {
-        draw_GaugeScreen(screenIndex);
-    }
-    else if (currentState == STATE_MENU)
-    {
-        drawMenuScreen();
-    }
-    else if (currentState == STATE_EDIT_MIN)
-    {
-        drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "Short: +0.1 | Long: Save");
-    }
-    else if (currentState == STATE_EDIT_MAX)
-    {
-        drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "Short: +0.1 | Long: Save");
-    }
-    else if (currentState == STATE_EDIT_SPEED)
-    {
-        drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "Short: +10 | Long: Save");
-    }
-    u8g2.sendBuffer();
+        lastDrawTime = millis();
+        u8g2.clearBuffer();
 
-    delay(10);
+        if (currentState == STATE_GAUGES)
+        {
+            draw_GaugeScreen(screenIndex);
+        }
+        else if (currentState == STATE_MENU)
+        {
+            drawMenuScreen();
+        }
+        else if (currentState == STATE_EDIT_MIN)
+        {
+            drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "Short: +0.1 | Long: Save");
+        }
+        else if (currentState == STATE_EDIT_MAX)
+        {
+            drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "Short: +0.1 | Long: Save");
+        }
+        else if (currentState == STATE_EDIT_SPEED)
+        {
+            drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "Short: +10 | Long: Save");
+        }
+
+        u8g2.sendBuffer();
+    }
 }
