@@ -64,10 +64,10 @@ jobs:
 
       - name: Send Discord Webhook
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_SECRET }}
         run: |
           # 1. Construct the predictable GitHub Release URLs
-          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.sha.outputs.short }}"
+          BASE_URL="https://github.com/${{ giitthub.repository }}/releases/download/${{ steps.sha.outputs.short }}"
           FW_URL="$BASE_URL/firmware-${{ steps.sha.outputs.short }}.bin"
           FS_URL="$BASE_URL/littlefs-${{ steps.sha.outputs.short }}.bin"
           ZIP_URL="$BASE_URL/firm_fs-${{ steps.sha.outputs.short }}.zip"
