@@ -179,12 +179,14 @@ void restart_ESP()
 // ==== UI Draw Helpers ====
 void draw_BottomText(String text)
 {
-    // Updated to exactly cover the bottom 16 pixels (Y=48 to 64) for Bi-Color screens
+    // Clears the bottom 16 pixels (Y=48 to 64) and draws text without a frame
     u8g2.setFont(u8g2_font_helvR08_tr);
-    u8g2.setDrawColor(1);
-    u8g2.drawFrame(0, 48, 128, 16);
+
+    // 1. Clear the background (Black)
     u8g2.setDrawColor(0);
-    u8g2.drawBox(1, 49, 126, 14);
+    u8g2.drawBox(0, 48, 128, 16);
+
+    // 2. Draw the text (White)
     u8g2.setDrawColor(1);
     drawStringCenter(60, text);
 }
