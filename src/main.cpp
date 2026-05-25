@@ -32,6 +32,7 @@ struct Settings
   int engload_screen_type;
   int battery_screen_type;
   int coolant_screen_type;
+  int intake_temp_screen_type;
   int tick_line_gauge;
 };
 
@@ -44,6 +45,7 @@ int BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
 int ENGLOAD_SCREEN = 0; // 0 = text, 1 = gauge
 int BATTERY_SCREEN = 0; // 0 = text, 1 = gauge
 int COOLANT_SCREEN = 0; // 0 = text, 1 = gauge
+int IAT_SCREEN = 0;     // 0 = text, 1 = gauge
 int TICK_LINE_GAUGE = 2;
 
 // ==== Dashboard refresh state ====
@@ -188,6 +190,7 @@ String generateWebPage()
   html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
   html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   return html;
 }
@@ -236,6 +239,11 @@ void loadValues()
   {
     COOLANT_SCREEN = 0; // Reset to 0 if out of bounds
   }
+  IAT_SCREEN = cfg.intake_temp_screen_type;
+  if (IAT_SCREEN < 0 || IAT_SCREEN >= ScreenTypes)
+  {
+    IAT_SCREEN = 0; // Reset to 0 if out of bounds
+  }
   TICK_LINE_GAUGE = cfg.tick_line_gauge;
   Serial.println("Settings loaded from EEPROM:");
   Serial.printf("Last Screen: %d\n", screenIndex);
@@ -246,6 +254,7 @@ void loadValues()
   Serial.printf("Battery Screen Type: %d\n", BATTERY_SCREEN);
   Serial.printf("Coolant Screen Type: %d\n", COOLANT_SCREEN);
   Serial.printf("Tick Line Gauge: %d\n", TICK_LINE_GAUGE);
+  Serial.printf("IAT Screen Type: %d\n", IAT_SCREEN);
 }
 
 // ==== Restart ESP ====
@@ -355,6 +364,10 @@ String formatDecimal(double value, uint8_t decimals)
 }
 
 AreaChartData turboHistory = {{0}, 0, false};
+AreaChartData loadHistory = {{0}, 0, false};
+AreaChartData batteryHistory = {{0}, 0, false};
+AreaChartData coolantHistory = {{0}, 0, false};
+AreaChartData iatHistory = {{0}, 0, false};
 
 // ==== Add value to history ====
 void addValueToHistory(AreaChartData &history, double value, double minValue, double maxValue)
@@ -766,6 +779,17 @@ void draw_IntakeTempScreen()
   draw_InfoText("Temp admission", intakeTemp, "°C");
 }
 
+void draw_IntakeTempGaugeScreen()
+{
+  intake_temp = myELM327.intakeAirTemp();
+  if (myELM327.nb_rx_state == ELM_SUCCESS)
+  {
+    intakeTemp = intake_temp;
+  }
+  // draw_LineGauge(intakeTemp, -20.0, 60.0, "Temp admission", "°C");
+  draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp admission", "°C");
+}
+
 void draw_EngineLoadTextScreen()
 {
   engine_load = myELM327.engineLoad();
@@ -783,7 +807,8 @@ void draw_EngineLoadGaugeScreen()
   {
     engineLoad = engine_load;
   }
-  draw_LineGauge(engineLoad, 0, 100, "Charge moteur", "%");
+  draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge moteur", "%");
+  // draw_LineGauge(engineLoad, 0, 100, "Charge moteur", "%");
 }
 
 void draw_EngLoadScreens()
@@ -815,7 +840,8 @@ void draw_BatteryVoltageGaugeScreen()
   {
     batteryVoltage = battery_voltage - 2.0; // Adjust for alternator voltage drop
   }
-  draw_LineGauge(batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
+  draw_AreaChartWithHistory(batteryHistory, batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
+  // draw_LineGauge(batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
 }
 
 void draw_BatteryVoltageScreens()
@@ -848,6 +874,7 @@ void draw_CoolantTempGaugeScreen()
     coolantTemp = coolant_temp;
   }
   draw_LineGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
+  draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
 }
 
 void draw_CoolantTempScreens()
@@ -1222,10 +1249,12 @@ void setup()
   // ==== Basic setup ====
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-
+  delay(500); // Allow time for serial to initialize
+  Serial.println("\n\n=== Starting CANuSEE ===");
   // ==== OLED init ====
   display.init();
   display.clear();
+  display.setBrightness(0); // Start with backlight off for fade-in effect
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_16);
   display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
@@ -1233,7 +1262,13 @@ void setup()
   // display.drawString(32, 24, "Engineering");
   draw_BottomText(version_string);
   display.display();
-  delay(1000);
+  // ==== Fade in effect ====
+  for (int b = 0; b <= 255; b += 25)
+  {
+    display.setBrightness(b);
+    delay(30);
+  }
+  delay(500);
   // display.clear();
   // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText("Starting...");
