@@ -794,9 +794,9 @@ void loop()
     }
     lastButtonState = reading;
 
-    // ==== 2. Rate-Limited Screen Drawing Router (20 FPS) ====
+    // ==== 2. Rate-Limited Screen Drawing Router (50 FPS) ====
     static unsigned long lastDrawTime = 0;
-    if (millis() - lastDrawTime > 50)
+    if (millis() - lastDrawTime > 20)
     {
         lastDrawTime = millis();
         u8g2.clearBuffer();
