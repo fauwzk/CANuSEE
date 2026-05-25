@@ -2,7 +2,7 @@
 #include <EEPROM.h>
 #include "BluetoothSerial.h"
 #include "ELMduino.h"
-#include <SSD1306Wire.h>
+#include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <LittleFS.h>
@@ -17,28 +17,25 @@ const char *ssid = "CANuSEE_Config";
 
 // ==== Web Server ====
 WebServer server(80);
-
-// ==== DNS Server ====
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
 // ==== Settings Structure ====
 struct Settings
 {
-  int last_screen;
-  int boost_screen_type;
-  float turbo_min;
-  float turbo_max;
-  int engload_screen_type;
-  int battery_screen_type;
-  int coolant_screen_type;
-  int intake_temp_screen_type;
-  int tick_line_gauge;
+    int last_screen;
+    int boost_screen_type;
+    float turbo_min;
+    float turbo_max;
+    int engload_screen_type;
+    int battery_screen_type;
+    int coolant_screen_type;
+    int intake_temp_screen_type;
+    int tick_line_gauge;
 };
 
 // ==== EEPROM Setup ====
 #define EEPROM_SIZE sizeof(Settings)
-
 Settings cfg;
 
 int BOOST_SCREEN = 0;   // 0 = text, 1 = gauge
@@ -51,20 +48,13 @@ int TICK_LINE_GAUGE = 2;
 // ==== Dashboard refresh state ====
 uint8_t dashStep = 0;
 unsigned long dashLastUpdate = 0;
-const unsigned long dashDelay = 10; // small delay between requests
-
-// Stored dashboard values
-float dashBoost = 0;
-float dashIAT = 0;
-float dashCoolant = 0;
-float dashLoad = 0;
-
-// ==== Version ====
+const unsigned long dashDelay = 10;
+float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashLoad = 0;
 
 String version_string = "CANuSEE " FW_VERSION;
 
-// ==== OLED ====
-SSD1306Wire display(0x3C, 21, 22); // SDA=21, SCL=22
+// ==== OLED (U8g2) ====
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 22, 21);
 
 // ==== ELM327 Classic Bluetooth ====
 BluetoothSerial SerialBT;
@@ -76,12 +66,8 @@ uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 
 // ==== Display center coordinates ====
 const int centerX = 64;
-const int centerY = 55;
-
-// ==== Screen control ====
 const int screenNumbers = 8;
 uint8_t screenIndex = 0;
-
 uint8_t ScreenTypes = 2;
 unsigned long lastSwitch = 0;
 
@@ -93,228 +79,174 @@ float TURBO_MAX_BAR = 1.5;
 #define BUTTON_PIN 32
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 300;
-const unsigned long longPressDuration = 1000; // 2 seconds for long press
+const unsigned long longPressDuration = 1000;
 
 // ==== Bluetooth setup ====
-#define BT_DISCOVER_TIME 500000
-esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE; // or ESP_SPP_SEC_ENCRYPT|ESP_SPP_SEC_AUTHENTICATE to request pincode confirmation
-esp_spp_role_t role = ESP_SPP_ROLE_MASTER; // or ESP_SPP_ROLE_MASTER
+esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE;
+esp_spp_role_t role = ESP_SPP_ROLE_MASTER;
 
 // ==== Variables for OBD-II data ====
-float atmo_kpa;
-float maf_kpa;
-float coolant_temp;
-float intake_temp;
-float engine_load;
-float battery_voltage;
-float oil_temp;
-float turbo_pressure;
+float atmo_kpa, maf_kpa, coolant_temp, intake_temp, engine_load, battery_voltage, turbo_pressure;
+float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0;
+float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 
-// ==== Variables to hold last valid readings ====
-float atmoPressure = 0.0;
-float mafPressure = 0.0;
-float intakeTemp = 0.0;
-float engineLoad = 0.0;
-float coolantTemp = 0.0;
-float batteryVoltage = 0.0;
-float fuelLevel = 0.0;
-float oilTemp = 0.0;
-float turboPressure = 0.0;
-
-String generateWebPage()
+// ==== U8g2 Text Alignment Helpers ====
+void drawStringCenter(int y, String text)
 {
-  File file = LittleFS.open("/index.html", "r");
-  if (!file)
-  {
-    return "<html><body><h3>File not found</h3></body></html>";
-  }
-
-  String html = file.readString();
-  file.close();
-
-  // Replace placeholders
-  html.replace("%MIN%", String(TURBO_MIN_BAR));
-  html.replace("%MAX%", String(TURBO_MAX_BAR));
-  html.replace("%VERSION%", version_string);
-  html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
-  html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
-  html.replace("%SELECTED_VOLTAGE_TEXT%", (BATTERY_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
-  html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
-  html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
-  html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
-  html.replace("%TICKS%", String(TICK_LINE_GAUGE));
-  return html;
+    int w = u8g2.getStrWidth(text.c_str());
+    u8g2.setCursor(centerX - (w / 2), y);
+    u8g2.print(text);
 }
 
+void drawStringLeft(int x, int y, String text)
+{
+    u8g2.setCursor(x, y);
+    u8g2.print(text);
+}
+
+// ==== HTML Generator ====
+String generateWebPage()
+{
+    File file = LittleFS.open("/index.html", "r");
+    if (!file)
+        return "<html><body><h3>File not found</h3></body></html>";
+    String html = file.readString();
+    file.close();
+
+    html.replace("%MIN%", String(TURBO_MIN_BAR));
+    html.replace("%MAX%", String(TURBO_MAX_BAR));
+    html.replace("%VERSION%", version_string);
+    html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_VOLTAGE_TEXT%", (BATTERY_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
+    html.replace("%TICKS%", String(TICK_LINE_GAUGE));
+    return html;
+}
+
+// ==== EEPROM Functions ====
 void saveValues()
 {
-  cfg.last_screen = screenIndex;
-  cfg.boost_screen_type = BOOST_SCREEN;
-  cfg.turbo_min = TURBO_MIN_BAR;
-  cfg.turbo_max = TURBO_MAX_BAR;
-  cfg.engload_screen_type = ENGLOAD_SCREEN;
-  cfg.battery_screen_type = BATTERY_SCREEN;
-  cfg.coolant_screen_type = COOLANT_SCREEN;
-  cfg.tick_line_gauge = TICK_LINE_GAUGE;
-  EEPROM.put(0, cfg);
-  EEPROM.commit();
+    cfg.last_screen = screenIndex;
+    cfg.boost_screen_type = BOOST_SCREEN;
+    cfg.turbo_min = TURBO_MIN_BAR;
+    cfg.turbo_max = TURBO_MAX_BAR;
+    cfg.engload_screen_type = ENGLOAD_SCREEN;
+    cfg.battery_screen_type = BATTERY_SCREEN;
+    cfg.coolant_screen_type = COOLANT_SCREEN;
+    cfg.intake_temp_screen_type = IAT_SCREEN;
+    cfg.tick_line_gauge = TICK_LINE_GAUGE;
+    EEPROM.put(0, cfg);
+    EEPROM.commit();
 }
 
 void loadValues()
 {
-  EEPROM.get(0, cfg);
-  screenIndex = cfg.last_screen;
-  if (screenIndex >= screenNumbers)
-  {
-    screenIndex = 0; // Reset to 0 if out of bounds
-  }
-  BOOST_SCREEN = cfg.boost_screen_type;
-  if (BOOST_SCREEN < 0 || BOOST_SCREEN >= ScreenTypes)
-  {
-    BOOST_SCREEN = 0; // Reset to 0 if out of bounds
-  }
-  TURBO_MIN_BAR = cfg.turbo_min;
-  TURBO_MAX_BAR = cfg.turbo_max;
-  ENGLOAD_SCREEN = cfg.engload_screen_type;
-  if (ENGLOAD_SCREEN < 0 || ENGLOAD_SCREEN >= ScreenTypes)
-  {
-    ENGLOAD_SCREEN = 0; // Reset to 0 if out of bounds
-  }
-  BATTERY_SCREEN = cfg.battery_screen_type;
-  if (BATTERY_SCREEN < 0 || BATTERY_SCREEN >= ScreenTypes)
-  {
-    BATTERY_SCREEN = 0; // Reset to 0 if out of bounds
-  }
-  COOLANT_SCREEN = cfg.coolant_screen_type;
-  if (COOLANT_SCREEN < 0 || COOLANT_SCREEN >= ScreenTypes)
-  {
-    COOLANT_SCREEN = 0; // Reset to 0 if out of bounds
-  }
-  IAT_SCREEN = cfg.intake_temp_screen_type;
-  if (IAT_SCREEN < 0 || IAT_SCREEN >= ScreenTypes)
-  {
-    IAT_SCREEN = 0; // Reset to 0 if out of bounds
-  }
-  TICK_LINE_GAUGE = cfg.tick_line_gauge;
-  Serial.println("Settings loaded from EEPROM:");
-  Serial.printf("Last Screen: %d\n", screenIndex);
-  Serial.printf("Boost Screen Type: %d\n", BOOST_SCREEN);
-  Serial.printf("Turbo Min: %.2f\n", TURBO_MIN_BAR);
-  Serial.printf("Turbo Max: %.2f\n", TURBO_MAX_BAR);
-  Serial.printf("EngLoad Screen Type: %d\n", ENGLOAD_SCREEN);
-  Serial.printf("Battery Screen Type: %d\n", BATTERY_SCREEN);
-  Serial.printf("Coolant Screen Type: %d\n", COOLANT_SCREEN);
-  Serial.printf("Tick Line Gauge: %d\n", TICK_LINE_GAUGE);
-  Serial.printf("IAT Screen Type: %d\n", IAT_SCREEN);
+    EEPROM.get(0, cfg);
+    screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
+    BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type < ScreenTypes) ? cfg.boost_screen_type : 0;
+    TURBO_MIN_BAR = cfg.turbo_min;
+    TURBO_MAX_BAR = cfg.turbo_max;
+    ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type < ScreenTypes) ? cfg.engload_screen_type : 0;
+    BATTERY_SCREEN = (cfg.battery_screen_type >= 0 && cfg.battery_screen_type < ScreenTypes) ? cfg.battery_screen_type : 0;
+    COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type < ScreenTypes) ? cfg.coolant_screen_type : 0;
+    IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < ScreenTypes) ? cfg.intake_temp_screen_type : 0;
+    TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
 }
 
-// ==== Restart ESP ====
 void restart_ESP()
 {
-  display.normalDisplay();
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(64, 25, "REBOOTING!");
-  display.display();
-  delay(1000);
-  ESP.restart();
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_helvB12_tr);
+    drawStringCenter(35, "REBOOTING!");
+    u8g2.sendBuffer();
+    delay(1000);
+    ESP.restart();
 }
 
-// ==== Draw bottom text ====
+// ==== UI Draw Helpers ====
 void draw_BottomText(String text)
 {
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_10);
-  display.drawRect(0, 54, 128, 10);
-  display.setColor(BLACK);
-  display.fillRect(0, 54, 128, 10);
-  display.setColor(WHITE);
-  display.drawString(centerX, 52, text);
+    u8g2.setFont(u8g2_font_helvB08_tr); // ~10px
+    u8g2.setDrawColor(1);
+    u8g2.drawFrame(0, 54, 128, 10);
+    u8g2.setDrawColor(0);
+    u8g2.drawBox(1, 55, 126, 8);
+    u8g2.setDrawColor(1);
+    drawStringCenter(63, text);
 }
 
-// ==== Display info ====
 void displayInfo(String msg)
 {
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_24);
-  display.drawString(64, 25, "Info:");
-  draw_BottomText(msg);
-  display.display();
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_helvB18_tr); // ~24px
+    drawStringCenter(30, "Info:");
+    draw_BottomText(msg);
+    u8g2.sendBuffer();
 }
 
-// ==== Draw screen number ====
+void displayError(String msg)
+{
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    drawStringCenter(30, "ERROR!");
+    draw_BottomText(msg);
+    u8g2.sendBuffer();
+}
+
 void draw_ScreenNumber(uint8_t index)
 {
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 52, String(index + 1) + "/" + String(screenNumbers));
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringLeft(0, 63, String(index + 1) + "/" + String(screenNumbers));
 }
 
-// ==== Draw info text screen ====
 void draw_InfoText(String title, double value, String unit)
 {
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(centerX, 0, title);
-  display.setFont(ArialMT_Plain_24);
-  if (value == (int)value)
-  {
-    display.drawString(centerX, 20, String((int)value) + " " + unit);
-  }
-  else
-  {
-    display.drawString(centerX, 20, String(value) + " " + unit);
-  }
-  display.display();
-}
-// ==== Area Chart History Buffer ====
-#define AREA_CHART_HISTORY 105 // Number of points to store (match chart width)
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
+    u8g2.setFont(u8g2_font_helvB12_tr); // ~16px
+    drawStringCenter(16, title);
+    u8g2.setFont(u8g2_font_helvB18_tr); // ~24px
 
+    String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
+    drawStringCenter(44, valStr + " " + unit);
+}
+
+// ==== History Buffers & Formatters ====
+#define AREA_CHART_HISTORY 105
 struct AreaChartData
 {
-  double values[AREA_CHART_HISTORY];
-  uint8_t currentIndex;
-  bool initialized;
+    double values[AREA_CHART_HISTORY];
+    uint8_t currentIndex;
+    bool initialized;
 };
 
 String alignSign(String value)
 {
-  if (!value.startsWith("-"))
-  {
-    return " " + value; // Ajoute un espace si pas de "-"
-  }
-  return value;
+    if (!value.startsWith("-"))
+        return " " + value;
+    return value;
 }
 
-// ==== Helper function to format decimal numbers without rounding ====
 String formatDecimal(double value, uint8_t decimals)
 {
-  // Handle sign
-  String result = (value < 0) ? "-" : "";
-  value = abs(value);
-
-  // Integer part
-  result += String((int)value);
-  result += ".";
-
-  // Decimal part
-  double decPart = value - (int)value;
-  for (int i = 0; i < decimals; i++)
-  {
-    decPart *= 10;
-    int digit = (int)decPart;
-    result += String(digit);
-    decPart -= digit;
-  }
-
-  return result;
+    String result = (value < 0) ? "-" : "";
+    value = abs(value);
+    result += String((int)value) + ".";
+    double decPart = value - (int)value;
+    for (int i = 0; i < decimals; i++)
+    {
+        decPart *= 10;
+        int digit = (int)decPart;
+        result += String(digit);
+        decPart -= digit;
+    }
+    return result;
 }
 
 AreaChartData turboHistory = {{0}, 0, false};
@@ -323,818 +255,336 @@ AreaChartData batteryHistory = {{0}, 0, false};
 AreaChartData coolantHistory = {{0}, 0, false};
 AreaChartData iatHistory = {{0}, 0, false};
 
-// ==== Add value to history ====
 void addValueToHistory(AreaChartData &history, double value, double minValue, double maxValue)
 {
-  // Clamp value
-  if (value < minValue)
-    value = minValue;
-  if (value > maxValue)
-    value = maxValue;
-
-  // Add value at current index
-  history.values[history.currentIndex] = value;
-
-  // Move to next position
-  history.currentIndex = (history.currentIndex + 1) % AREA_CHART_HISTORY;
-
-  // Mark as initialized after first full cycle
-  if (history.currentIndex == 0)
-    history.initialized = true;
+    if (value < minValue)
+        value = minValue;
+    if (value > maxValue)
+        value = maxValue;
+    history.values[history.currentIndex] = value;
+    history.currentIndex = (history.currentIndex + 1) % AREA_CHART_HISTORY;
+    if (history.currentIndex == 0)
+        history.initialized = true;
 }
 
-// Draws a curve chart with historical data
-// Value displayed inside the graph with text color inverted based on background
-void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue,
-                               double maxValue, String label, String unit)
+void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue, double maxValue, String label, String unit)
 {
-  // Add new value to history
-  addValueToHistory(history, newValue, minValue, maxValue);
+    addValueToHistory(history, newValue, minValue, maxValue);
 
-  // Chart layout - shifted right to make room for label
-  int chartX = 20;
-  int chartY = 12;
-  int chartWidth = AREA_CHART_HISTORY; // Reduced from AREA_CHART_HISTORY (108)
-  int chartHeight = 35;                // Reduced from 35
-  int baseY = chartY + chartHeight;
-  int labelX = 0; // Left position for label
+    int chartX = 20, chartY = 12, chartWidth = AREA_CHART_HISTORY, chartHeight = 35;
+    int baseY = chartY + chartHeight;
+    int labelX = 0;
 
-  // ==== Draw outline ====
-  display.drawRect(chartX, chartY, chartWidth, chartHeight);
+    u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringCenter(10, label);
 
-  // ==== Draw label at top ====
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(centerX, 0, label);
+    double range = maxValue - minValue;
+    for (int i = 0; i < chartWidth; i++)
+    {
+        int historyIdx = history.currentIndex + i;
+        if (!history.initialized && i >= history.currentIndex)
+            break;
+        historyIdx = historyIdx % AREA_CHART_HISTORY;
 
-  // ==== Draw area chart curve ====
-  double range = maxValue - minValue;
+        double val = history.values[historyIdx];
+        val = constrain(val, minValue, maxValue);
 
-  // Draw filled area under curve
-  for (int i = 0; i < chartWidth; i++)
-  {
-    // Get index in history buffer
-    int historyIdx = history.currentIndex + i;
-    if (!history.initialized && i >= history.currentIndex)
-      break; // Don't draw beyond initialized data
+        double normalizedVal = (val - minValue) / range;
+        int pixelHeight = (int)(chartHeight * normalizedVal);
+        int pixelY = baseY - pixelHeight;
 
-    historyIdx = historyIdx % AREA_CHART_HISTORY;
+        u8g2.drawLine(chartX + i, baseY, chartX + i, pixelY);
+    }
 
-    double val = history.values[historyIdx];
+    int maxLabelY = chartY + 8;
+    int minLabelY = baseY;
+    drawStringLeft(labelX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
+    drawStringLeft(labelX, minLabelY, alignSign(formatDecimal(minValue, 1)));
 
-    // Clamp to range
-    if (val < minValue)
-      val = minValue;
-    if (val > maxValue)
-      val = maxValue;
+    int valueCenterY = (maxLabelY + minLabelY) / 2 + 4;
+    drawStringLeft(labelX, valueCenterY, alignSign(formatDecimal(newValue, 1)));
 
-    // Calculate pixel height
-    double normalizedVal = (val - minValue) / range;
-    int pixelHeight = (int)(chartHeight * normalizedVal);
-    int pixelY = baseY - pixelHeight;
-
-    // Draw vertical line from base to point (creates filled area)
-    display.drawLine(chartX + i, baseY, chartX + i, pixelY);
-  }
-
-  // ==== Draw min/max/value labels aligned to chart ====
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-
-  // Positions verticales
-  int maxLabelY = chartY - 3;
-  int minLabelY = baseY - 10;
-
-  // Draw MAX (collé au graphique)
-  display.drawString(labelX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
-
-  // Draw MIN (collé au graphique)
-  display.drawString(labelX, minLabelY, alignSign(formatDecimal(minValue, 1)));
-
-  // ==== Draw value centered between min & max (no unit) ====
-  int textHeight = 10; // ArialMT_Plain_10 ≈ 10px
-
-  // ==== Draw value centered BETWEEN MIN and MAX ====
-  int maxCenterY = maxLabelY + textHeight / 2; // centre visuel de max
-  int minCenterY = minLabelY + textHeight / 2; // centre visuel de min
-
-  int valueCenterY = (maxCenterY + minCenterY) / 2; // milieu entre les centres
-  int textPosY = valueCenterY - textHeight / 2;     // position coin supérieur gauche pour drawString
-
-  display.drawString(labelX, textPosY, alignSign(formatDecimal(newValue, 1)));
-
-  // ==== Bottom info ====
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
 }
 
-// ==== Tight & Clear Speedometer Gauge with Values ====
-void draw_SpeedoGauge(double value, double minValue, double maxValue, String label, String unit)
-{
-  const int cx = 64;                       // Center X
-  const int cy = 48;                       // Center Y (fitting screen)
-  const int outerRadius = 38;              // Smaller radius for tighter gauge
-  const int innerRadius = outerRadius - 8; // Thickness
-  const int startAngle = 135;              // Left arc end
-  const int endAngle = 45;                 // Right arc end
-
-  // Clamp value
-  if (value < minValue)
-    value = minValue;
-  if (value > maxValue)
-    value = maxValue;
-
-  // ==== Draw arc outline ====
-  for (int a = startAngle; a >= endAngle; a -= 2) // finer outline
-  {
-    int xo = cx + outerRadius * cos(a * DEG_TO_RAD);
-    int yo = cy - outerRadius * sin(a * DEG_TO_RAD);
-    int xi = cx + innerRadius * cos(a * DEG_TO_RAD);
-    int yi = cy - innerRadius * sin(a * DEG_TO_RAD);
-    display.drawLine(xi, yi, xo, yo);
-  }
-
-  // ==== Tick marks with values ====
-  int tickCount = TICK_LINE_GAUGE;
-  int tickLength = 3;
-  for (int i = 0; i <= tickCount; i++)
-  {
-    double tAngle = startAngle - i * (startAngle - endAngle) / tickCount;
-    int x1 = cx + (outerRadius - 1) * cos(tAngle * DEG_TO_RAD);
-    int y1 = cy - (outerRadius - 1) * sin(tAngle * DEG_TO_RAD);
-    int x2 = cx + (outerRadius - 1 - tickLength) * cos(tAngle * DEG_TO_RAD);
-    int y2 = cy - (outerRadius - 1 - tickLength) * sin(tAngle * DEG_TO_RAD);
-    display.drawLine(x1, y1, x2, y2);
-
-    // Draw numeric labels every second tick (or first/last)
-    if (i == 0 || i == tickCount || i % 2 == 0)
-    {
-      double tickValue = minValue + (maxValue - minValue) * i / tickCount;
-      int labelRadius = outerRadius + 8; // slightly outside the arc
-      int lx = cx + labelRadius * cos(tAngle * DEG_TO_RAD);
-      int ly = cy - labelRadius * sin(tAngle * DEG_TO_RAD);
-      display.setFont(ArialMT_Plain_10);
-      display.setTextAlignment(TEXT_ALIGN_CENTER);
-      display.drawString(lx, ly, String(tickValue, 0));
-    }
-  }
-
-  // ==== Draw needle ====
-  double range = maxValue - minValue;
-  double needleAngle = startAngle - (value - minValue) / range * (startAngle - endAngle);
-  int needleLength = outerRadius - 6;
-  int nx = cx + needleLength * cos(needleAngle * DEG_TO_RAD);
-  int ny = cy - needleLength * sin(needleAngle * DEG_TO_RAD);
-  display.drawLine(cx, cy, nx, ny);
-
-  // ==== Center hub ====
-  for (int r = 0; r < 2; r++)
-  {
-    for (int a = 0; a < 360; a += 15)
-    {
-      int px = cx + r * cos(a * DEG_TO_RAD);
-      int py = cy - r * sin(a * DEG_TO_RAD);
-      display.setPixel(px, py);
-    }
-  }
-
-  // ==== Label & current value ====
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(cx, 0, label); // top label
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(cx, cy + outerRadius + 8, String(value) + " " + unit); // numeric
-
-  // ==== Optional bottom info ====
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-}
-
-// ==== Draw line gauge with graduations ====
-// Draws a horizontal line gauge that fills up as the value increases
 void draw_LineGauge(double value, double minValue, double maxValue, String label, String unit)
 {
-  double barValue = value;
-  // Clamp value
-  if (barValue < minValue)
-    barValue = minValue;
-  if (barValue > maxValue)
-    barValue = maxValue;
+    double barValue = constrain(value, minValue, maxValue);
+    int barX = 14, barY = 14, barWidth = 100, barHeight = 10;
+    double range = maxValue - minValue;
+    double fillPercent = (barValue - minValue) / range;
+    int fillWidth = (int)(barWidth * fillPercent);
 
-  // Layout parameters
-  int barX = 14;      // left position
-  int barY = 14;      // top position
-  int barWidth = 100; // total width of the bar
-  int barHeight = 10; // height of the bar
+    u8g2.drawFrame(barX, barY, barWidth, barHeight);
+    u8g2.drawBox(barX, barY, fillWidth, barHeight);
 
-  // Calculate fill width
-  double range = maxValue - minValue;
-  double fillPercent = (barValue - minValue) / range;
-  int fillWidth = (int)(barWidth * fillPercent);
+    int tickCount = TICK_LINE_GAUGE;
+    int tickHeight = 2;
+    int labelOffsetY = barY + barHeight + 10;
 
-  // ==== Draw bar outline ====
-  display.drawRect(barX, barY, barWidth, barHeight);
-
-  // ==== Draw fill ====
-  display.fillRect(barX, barY, fillWidth, barHeight);
-
-  // ==== Draw graduations ====
-  int tickCount = TICK_LINE_GAUGE; // number of intermediate marks (between min and max)
-  int tickHeight = 2;
-  int labelOffsetY = barY + barHeight + 2;
-
-  for (int i = 0; i <= tickCount; i++)
-  {
-    int tickX;
-    if (i == 0)
+    for (int i = 0; i <= tickCount; i++)
     {
-      tickX = (barX + (barWidth * i) / tickCount);
-    }
-    else
-    {
-      tickX = (barX + (barWidth * i) / tickCount) - 1; // -1 to center the tick
-    }
-    display.drawLine(tickX, barY + barHeight, tickX, barY + barHeight + tickHeight);
+        int tickX = (i == 0) ? barX : barX + (barWidth * i) / tickCount - 1;
+        u8g2.drawLine(tickX, barY + barHeight, tickX, barY + barHeight + tickHeight);
 
-    // Optional: add numeric label every second tick
-    if (i == 0 || i == tickCount || i % 2 == 0)
-    {
-      double tickValue = minValue + (range * i / tickCount);
-      display.setFont(ArialMT_Plain_10);
-      display.setTextAlignment(TEXT_ALIGN_CENTER);
-      display.drawString(tickX, labelOffsetY, String(tickValue, 1));
+        if (i == 0 || i == tickCount || i % 2 == 0)
+        {
+            double tickValue = minValue + (range * i / tickCount);
+            u8g2.setFont(u8g2_font_helvB08_tr);
+            int w = u8g2.getStrWidth(String(tickValue, 1).c_str());
+            u8g2.setCursor(tickX - (w / 2), labelOffsetY);
+            u8g2.print(String(tickValue, 1));
+        }
     }
-  }
 
-  // ==== Draw label and current value ====
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(centerX, 0, label);
-  display.drawString(centerX, labelOffsetY + 10, String(value) + " " + unit);
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringCenter(10, label);
+    drawStringCenter(labelOffsetY + 12, String(value, 1) + " " + unit);
 
-  // ==== Optional bottom info ====
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
 }
 
-void resetDTCs()
-{
-  displayInfo("Resetting DTCs...");
-  myELM327.resetDTC();
-  while (myELM327.nb_rx_state != ELM_SUCCESS)
-  {
-    displayInfo("Resetting DTCs...");
-    display.display();
-  }
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    displayInfo("DTCs Resetted!");
-    delay(1000);
-  }
-  else
-  {
-    displayInfo("DTC Reset Failed!");
-    delay(1000);
-  }
-}
-
-// ==== Get Atmospheric Pressure ====
-void get_AtmosphericPressure()
-{
-  if (0 == 1)
-  {
-    atmo_kpa = myELM327.absBaroPressure();
-    while (myELM327.nb_rx_state != ELM_SUCCESS)
-    {
-      displayInfo("Getting\nPressure...");
-      display.display();
-    }
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      atmoPressure = atmo_kpa;
-    }
-    else
-    {
-      atmoPressure = 0.0;
-    }
-  }
-  else
-  {
-    atmo_kpa = 100.0;
-    atmoPressure = atmo_kpa;
-  }
-}
-
-void updateDashboardSequential()
-{
-  if (millis() - dashLastUpdate < dashDelay)
-    return;
-  dashLastUpdate = millis();
-
-  switch (dashStep)
-  {
-  // ---- STEP 0 : BOOST ----
-  case 0:
-    turbo_pressure = myELM327.manifoldPressure();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      turbo_pressure = (turbo_pressure - 100) * 0.01;
-      dashBoost = turbo_pressure;
-      dashStep++;
-    }
-    break;
-
-  // ---- STEP 1 : Intake temp ----
-  case 1:
-    intake_temp = myELM327.intakeAirTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      dashIAT = intake_temp;
-      dashStep++;
-    }
-    break;
-
-  // ---- STEP 2 : Coolant ----
-  case 2:
-    coolant_temp = myELM327.engineCoolantTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      dashCoolant = coolant_temp;
-      dashStep++;
-    }
-    break;
-
-  // ---- STEP 3 : Engine load ----
-  case 3:
-    engine_load = myELM327.engineLoad();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      dashLoad = engine_load;
-      dashStep = 0; // restart cycle
-    }
-    break;
-  }
-}
-
-void drawDashboardScreen()
-{
-  display.clear();
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-
-  // Column X positions
-  int col1 = 0;
-  int col2 = 64; // adjust if needed for your screen width
-
-  // Row Y positions
-  int row1 = 0;
-  int row2 = 20;
-
-  // ---- Top left ----
-  display.drawString(col1, row1, "BOOST:");
-  display.drawString(col1, row1 + 10, String(dashBoost, 2) + " bar");
-
-  // ---- Top right ----
-  display.drawString(col2, row1, "IAT:");
-  display.drawString(col2, row1 + 10, String(dashIAT, 1) + " C");
-
-  // ---- Bottom left ----
-  display.drawString(col1, row2, "COOLANT:");
-  display.drawString(col1, row2 + 10, String(dashCoolant, 1) + " C");
-
-  // ---- Bottom right ----
-  display.drawString(col2, row2, "ENG LOAD:");
-  display.drawString(col2, row2 + 10, String(dashLoad, 1) + " %");
-
-  // ---- Keep bottom bar exactly the same ----
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-
-  display.display();
-}
+// ==== OBD Fetching and Screens ====
 
 void draw_MAFScreen()
 {
-  maf_kpa = myELM327.manifoldPressure();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    mafPressure = maf_kpa;
-  }
-  draw_InfoText("Pression MAF", mafPressure, "kPa");
-}
-
-void draw_IntakeTempScreen()
-{
-  intake_temp = myELM327.intakeAirTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    intakeTemp = intake_temp;
-  }
-  draw_InfoText("Temp admission", intakeTemp, "°C");
-}
-
-void draw_IntakeTempGaugeScreen()
-{
-  intake_temp = myELM327.intakeAirTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    intakeTemp = intake_temp;
-  }
-  // draw_LineGauge(intakeTemp, -20.0, 60.0, "Temp admission", "°C");
-  draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp admission", "°C");
-}
-
-void draw_EngineLoadTextScreen()
-{
-  engine_load = myELM327.engineLoad();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    engineLoad = engine_load;
-  }
-  draw_InfoText("Charge moteur", engineLoad, "%");
-}
-
-void draw_EngineLoadGaugeScreen()
-{
-  engine_load = myELM327.engineLoad();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    engineLoad = engine_load;
-  }
-  draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge moteur", "%");
-  // draw_LineGauge(engineLoad, 0, 100, "Charge moteur", "%");
-}
-
-void draw_EngLoadScreens()
-{
-  if (ENGLOAD_SCREEN == 0)
-  {
-    draw_EngineLoadTextScreen();
-  }
-  else
-  {
-    draw_EngineLoadGaugeScreen();
-  }
-}
-
-void draw_BatteryVoltageTextScreen()
-{
-  battery_voltage = myELM327.batteryVoltage();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    batteryVoltage = battery_voltage - 2.0; // Adjust for alternator voltage drop
-  }
-  draw_InfoText("Tension Bat", batteryVoltage, "V");
-}
-
-void draw_BatteryVoltageGaugeScreen()
-{
-  battery_voltage = myELM327.batteryVoltage();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    batteryVoltage = battery_voltage - 2.0; // Adjust for alternator voltage drop
-  }
-  draw_AreaChartWithHistory(batteryHistory, batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
-  // draw_LineGauge(batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
-}
-
-void draw_BatteryVoltageScreens()
-{
-  if (BATTERY_SCREEN == 0)
-  {
-    draw_BatteryVoltageTextScreen();
-  }
-  else
-  {
-    draw_BatteryVoltageGaugeScreen();
-  }
-}
-
-void draw_CoolantTempTextScreen()
-{
-  coolant_temp = myELM327.engineCoolantTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    coolantTemp = coolant_temp;
-  }
-  draw_InfoText("Temp LdR", coolantTemp, "°C");
-}
-
-void draw_CoolantTempGaugeScreen()
-{
-  coolant_temp = myELM327.engineCoolantTemp();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    coolantTemp = coolant_temp;
-  }
-  draw_LineGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
-  draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
-}
-
-void draw_CoolantTempScreens()
-{
-  if (COOLANT_SCREEN == 0)
-  {
-    draw_CoolantTempTextScreen();
-  }
-  else
-  {
-    draw_CoolantTempGaugeScreen();
-  }
-}
-
-void draw_TurboPressureLineScreen()
-{
-  turbo_pressure = myELM327.manifoldPressure();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    turbo_pressure = turbo_pressure - 100;  // Gauge pressure = absolute - atmospheric
-    turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
-    turboPressure = turbo_pressure;
-  }
-  // draw_LineGauge(turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
-  draw_AreaChartWithHistory(turboHistory, turboPressure, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
-}
-
-void draw_TurboPressureTextScreen()
-{ // Turbo pressure calculation:
-  turbo_pressure = myELM327.manifoldPressure();
-  if (myELM327.nb_rx_state == ELM_SUCCESS)
-  {
-    turbo_pressure = turbo_pressure - 100;  // Gauge pressure = absolute - atmospheric
-    turbo_pressure = turbo_pressure * 0.01; // Convert kPa to bar
-    turboPressure = turbo_pressure;
-  }
-  draw_InfoText("Pression Turbo", turboPressure, "Bar");
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        mafPressure = myELM327.manifoldPressure();
+    draw_InfoText("Pression MAF", mafPressure, "kPa");
 }
 
 void draw_BoostScreens()
 {
-  if (BOOST_SCREEN == 0)
-  {
-    draw_TurboPressureTextScreen();
-  }
-  else
-  {
-    draw_TurboPressureLineScreen();
-  }
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        turboPressureState = (myELM327.manifoldPressure() - 100) * 0.01;
+    if (BOOST_SCREEN == 0)
+        draw_InfoText("Pression Turbo", turboPressureState, "Bar");
+    else
+        draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
 }
 
-void draw_dtcCodes_nonBlocking()
+void draw_IntakeTempScreen()
 {
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        intakeTemp = myELM327.intakeAirTemp();
+    if (IAT_SCREEN == 0)
+        draw_InfoText("Temp admission", intakeTemp, "°C");
+    else
+        draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp admission", "°C");
+}
 
-  myELM327.currentDTCCodes(false); // false = non bloquant si supporté
-  myELM327.monitorStatus();
-  uint8_t codesFound = myELM327.DTC_Response.codesFound;
-  // --- Affichage ---
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(centerX, 0, "DTC Codes:");
+void draw_EngLoadScreens()
+{
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        engineLoad = myELM327.engineLoad();
+    if (ENGLOAD_SCREEN == 0)
+        draw_InfoText("Charge moteur", engineLoad, "%");
+    else
+        draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge moteur", "%");
+}
 
-  display.setFont(ArialMT_Plain_10);
-  if (codesFound == 0)
-  {
-    display.drawString(centerX, 20, "No DTC Codes");
-  }
-  else
-  {
-    display.setFont(ArialMT_Plain_24);
-    display.drawString(centerX, 20, String(codesFound));
-  }
+void draw_BatteryVoltageScreens()
+{
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        batteryVoltage = myELM327.batteryVoltage() - 2.0;
+    if (BATTERY_SCREEN == 0)
+        draw_InfoText("Tension Bat", batteryVoltage, "V");
+    else
+        draw_AreaChartWithHistory(batteryHistory, batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
+}
 
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-  display.display();
+void draw_CoolantTempScreens()
+{
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+        coolantTemp = myELM327.engineCoolantTemp();
+    if (COOLANT_SCREEN == 0)
+        draw_InfoText("Temp LdR", coolantTemp, "°C");
+    else
+        draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
 }
 
 void draw_dtcCodes()
 {
-  myELM327.currentDTCCodes(true);
-  // --- Configuration de base de l'affichage ---
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(centerX, 0, "DTC Codes:");
-
-  // --- Police plus petite pour la liste ---
-  display.setFont(ArialMT_Plain_10);
-
-  uint8_t codesFound = myELM327.DTC_Response.codesFound;
-
-  if (codesFound == 0)
-  {
-    display.drawString(centerX, 20, "No DTC Codes");
-  }
-  else
-  {
-    display.setFont(ArialMT_Plain_24);
-    display.drawString(centerX, 20, String(codesFound));
-  }
-
-  draw_BottomText(version_string);
-  draw_ScreenNumber(screenIndex);
-  display.display();
+    myELM327.currentDTCCodes(false);
+    u8g2.setFont(u8g2_font_helvB12_tr);
+    drawStringCenter(16, "DTC Codes:");
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    if (myELM327.DTC_Response.codesFound == 0)
+        drawStringCenter(40, "No DTC Codes");
+    else
+        drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
 }
 
-// ==== Display error ====
-void displayError(String msg)
+void updateDashboardSequential()
 {
-  display.clear();
-  display.invertDisplay();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_24);
-  display.drawString(64, 25, "ERROR!");
-  draw_BottomText(msg);
-  display.display();
+    if (millis() - dashLastUpdate < dashDelay)
+        return;
+    dashLastUpdate = millis();
+    switch (dashStep)
+    {
+    case 0:
+        if (myELM327.nb_rx_state == ELM_SUCCESS)
+        {
+            dashBoost = (myELM327.manifoldPressure() - 100) * 0.01;
+            dashStep++;
+        }
+        break;
+    case 1:
+        if (myELM327.nb_rx_state == ELM_SUCCESS)
+        {
+            dashIAT = myELM327.intakeAirTemp();
+            dashStep++;
+        }
+        break;
+    case 2:
+        if (myELM327.nb_rx_state == ELM_SUCCESS)
+        {
+            dashCoolant = myELM327.engineCoolantTemp();
+            dashStep++;
+        }
+        break;
+    case 3:
+        if (myELM327.nb_rx_state == ELM_SUCCESS)
+        {
+            dashLoad = myELM327.engineLoad();
+            dashStep = 0;
+        }
+        break;
+    }
 }
 
-void draw_NoDataScreen()
+void drawDashboardScreen()
 {
-  displayError("Screen Error");
-  delay(1000);
-  restart_ESP();
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    int col1 = 0, col2 = 64;
+    int row1 = 12, row2 = 34; // Baseline shifted down
+
+    drawStringLeft(col1, row1, "BOOST:");
+    drawStringLeft(col1, row1 + 10, String(dashBoost, 2) + " bar");
+    drawStringLeft(col2, row1, "IAT:");
+    drawStringLeft(col2, row1 + 10, String(dashIAT, 1) + " C");
+
+    drawStringLeft(col1, row2, "COOLANT:");
+    drawStringLeft(col1, row2 + 10, String(dashCoolant, 1) + " C");
+    drawStringLeft(col2, row2, "ENG LOAD:");
+    drawStringLeft(col2, row2 + 10, String(dashLoad, 1) + " %");
+
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
 }
 
-// ==== Draw gauge screen based on index ====
 void draw_GaugeScreen(uint8_t index)
 {
-  switch (index)
-  {
-  case 0:
-    draw_MAFScreen();
-    break;
-  case 1:
-    draw_BoostScreens();
-    break;
-  case 2:
-    draw_IntakeTempScreen();
-    break;
-  case 3:
-    draw_EngLoadScreens();
-    break;
-  case 4:
-    draw_BatteryVoltageScreens();
-    break;
-  case 5:
-    draw_CoolantTempScreens();
-    break;
-  case 6:
-    draw_dtcCodes();
-    break;
-  case 7:
-    updateDashboardSequential();
-    drawDashboardScreen();
-    break;
-  default:
-    draw_NoDataScreen();
-    break;
-  }
+    switch (index)
+    {
+    case 0:
+        draw_MAFScreen();
+        break;
+    case 1:
+        draw_BoostScreens();
+        break;
+    case 2:
+        draw_IntakeTempScreen();
+        break;
+    case 3:
+        draw_EngLoadScreens();
+        break;
+    case 4:
+        draw_BatteryVoltageScreens();
+        break;
+    case 5:
+        draw_CoolantTempScreens();
+        break;
+    case 6:
+        draw_dtcCodes();
+        break;
+    case 7:
+        updateDashboardSequential();
+        drawDashboardScreen();
+        break;
+    default:
+        displayError("Screen Error");
+        delay(1000);
+        restart_ESP();
+        break;
+    }
 }
 
-// ==== Fade transition effect ====
+void resetDTCs()
+{
+    displayInfo("Resetting DTCs...");
+    myELM327.resetDTC();
+    delay(1000);
+}
+
+// ==== Visual Effects ====
 void fadeTransition(uint8_t nextScreen)
 {
-  const int steps = 10;
-  for (int i = 0; i < steps; i++)
-  {
-    display.setBrightness(255 - (i * 25));
-    delay(20);
-  }
-  display.displayOff();
-  display.clear();
-  draw_GaugeScreen(nextScreen);
-  display.clear();
-  display.displayOn();
-  for (int i = 0; i < steps; i++)
-  {
-    display.setBrightness(i * 25);
-    delay(20);
-  }
+    for (int i = 0; i < 10; i++)
+    {
+        u8g2.setContrast(255 - (i * 25));
+        delay(20);
+    }
+    u8g2.setPowerSave(1);
+    u8g2.clearBuffer();
+    draw_GaugeScreen(nextScreen);
+    u8g2.sendBuffer();
+    u8g2.setPowerSave(0);
+    for (int i = 0; i < 10; i++)
+    {
+        u8g2.setContrast(i * 25);
+        delay(20);
+    }
+    u8g2.setContrast(255);
 }
 
 void drawHeartbeatSpinner()
 {
-  static uint8_t spinnerIndex = 0;
-  static unsigned long lastUpdate = 0;
+    static uint8_t spinnerIndex = 0;
+    static unsigned long lastUpdate = 0;
+    const unsigned long spinnerInterval = 200;
+    const char spinnerChars[] = {'|', '/', '-', '\\'};
 
-  const unsigned long spinnerInterval = 200; // vitesse du spinner (ms)
-  const char spinnerChars[] = {'|', '/', '-', '\\'};
-
-  if (millis() - lastUpdate >= spinnerInterval)
-  {
-    lastUpdate = millis();
-
-    // Calculer position bas à droite
-    int x = 122; // colonne proche du bord droit (OLED 128px)
-    int y = 54;  // ligne du bas (OLED 64px, bas rectangle à 54)
-
-    // Effacer le caractère précédent
-    display.setColor(BLACK);
-    display.fillRect(x, y, 6, 10); // petite zone du spinner
-    display.setColor(WHITE);
-
-    // Dessiner le spinner
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(x, y, String(spinnerChars[spinnerIndex]));
-
-    // Passer au caractère suivant
-    spinnerIndex = (spinnerIndex + 1) % 4;
-  }
+    if (millis() - lastUpdate >= spinnerInterval)
+    {
+        lastUpdate = millis();
+        int x = 122, y = 63;
+        u8g2.setDrawColor(0);
+        u8g2.drawBox(x, 55, 6, 8);
+        u8g2.setDrawColor(1);
+        u8g2.setFont(u8g2_font_helvB08_tr);
+        drawStringLeft(x, y, String(spinnerChars[spinnerIndex]));
+        spinnerIndex = (spinnerIndex + 1) % 4;
+    }
 }
 
-// ==== Start Captive Portal ====
+// ==== Captive Portal & Web ====
 void startCaptivePortal()
 {
-  WiFi.softAP(ssid, NULL);
-  IPAddress myIP = WiFi.softAPIP();
-  Serial.println("WiFi AP started: " + myIP.toString());
-  // Serveur DNS pour captive portal
-  dnsServer.start(DNS_PORT, "*", myIP); // redirige tout vers l'ESP
-
-  server.onNotFound([]()
-                    {
-server.sendHeader("Location", "/");
-server.send(302, "text/plain", ""); });
-  server.begin();
-}
-
-// Serve update.html explicitly
-void handleUpdatePage()
-{
-  File file = LittleFS.open("/update.html", "r");
-  if (!file)
-  {
-    server.send(404, "text/plain", "update.html not found");
-    return;
-  }
-  server.streamFile(file, "text/html");
-  file.close();
-}
-
-void handleFirmwareUpload()
-{
-  HTTPUpload &upload = server.upload();
-  Serial.println("FW Upload Status : " + String(upload.status));
-  if (upload.status == UPLOAD_FILE_START)
-  {
-    displayInfo("Firmware Update Start");
-    Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
-  }
-  else if (upload.status == UPLOAD_FILE_WRITE)
-  {
-    displayInfo("Updating...");
-    Update.write(upload.buf, upload.currentSize);
-  }
-  else if (upload.status == UPLOAD_FILE_END)
-  {
-    displayInfo("Finalizing Update...");
-    Update.end(true);
-  }
-}
-
-// ===== LittleFS OTA =====
-void handleFSUpload()
-{
-  HTTPUpload &upload = server.upload();
-  Serial.println("FS Upload Status: " + String(upload.status));
-  if (upload.status == UPLOAD_FILE_START)
-  {
-    displayInfo("LittleFS Update Start");
-    Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS);
-    // U_FS targets the LittleFS partition automatically
-  }
-  else if (upload.status == UPLOAD_FILE_WRITE)
-  {
-    displayInfo("LittleFS Updating...");
-    Update.write(upload.buf, upload.currentSize);
-  }
-  else if (upload.status == UPLOAD_FILE_END)
-  {
-    if (Update.end(true))
-    {
-      displayInfo("LittleFS Update Complete");
-    }
-    else
-    {
-      displayInfo("LittleFS Update Failed");
-    }
-  }
+    WiFi.softAP(ssid, NULL);
+    IPAddress myIP = WiFi.softAPIP();
+    dnsServer.start(DNS_PORT, "*", myIP);
+    server.onNotFound([]()
+                      {
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", ""); });
+    server.begin();
 }
 
 void startServer()
 {
+    startCaptivePortal();
+    server.on("/", HTTP_GET, []()
+              { server.send(200, "text/html", generateWebPage()); });
 
-  startCaptivePortal();
-  // ==== Web Server Routes ====
-  server.on("/", HTTP_GET, []()
-            { server.send(200, "text/html", generateWebPage()); });
-
-  server.on("/save", HTTP_POST, []()
-            {
-    if (server.hasArg("boost_min") && server.hasArg("boost_max") && server.hasArg("boost_gauge_type") &&
-        server.hasArg("engload_gauge_type") && server.hasArg("voltage_gauge_type") &&
-        server.hasArg("coolant_gauge_type") && server.hasArg("ticks"))
-    {
+    server.on("/save", HTTP_POST, []()
+              {
+    if (server.hasArg("boost_min") && server.hasArg("ticks")) {
       TURBO_MIN_BAR = server.arg("boost_min").toFloat();
       TURBO_MAX_BAR = server.arg("boost_max").toFloat();
       BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
@@ -1143,291 +593,213 @@ void startServer()
       COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
       TICK_LINE_GAUGE = server.arg("ticks").toInt();
       saveValues();
-      server.send(200, "text/html",
-                  "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
-    }
-    else
-    {
+      server.send(200, "text/html", "<html><body><h3>Saved!</h3><a href='/'>Back</a></body></html>");
+    } else {
       server.send(400, "text/plain", "Missing parameters");
     } });
 
-  server.on("/nextpage", HTTP_GET, []()
-            {
+    server.on("/nextpage", HTTP_GET, []()
+              {
     screenIndex = (screenIndex + 1) % screenNumbers;
     fadeTransition(screenIndex);
     cfg.last_screen = screenIndex;
     EEPROM.put(0, cfg);
     EEPROM.commit();
-    server.send(200, "text/html",
-                "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
+    server.send(200, "text/html", "<html><body><h3>Page Changed!</h3><a href='/'>Back</a></body></html>"); });
 
-  server.on("/reset", HTTP_GET, []()
-            {
-    server.send(200, "text/html",
-                "<html><body><h3>Device Resetting...</h3></body></html>");
+    server.on("/reset", HTTP_GET, []()
+              {
+    server.send(200, "text/html", "<html><body><h3>Device Resetting...</h3></body></html>");
     delay(1000);
     restart_ESP(); });
 
-  /*
-// Serve the update page
-server.on("/update.html", HTTP_GET, handleUpdatePage);
-
-   server.on("/update", HTTP_POST, []()
-            {
-server.send(200, "text/plain", "Firmware Updated. Rebooting...");
-delay(1000);
-ESP.restart(); }, handleFirmwareUpload);
-
-  server.on("/updatefs", HTTP_POST, []()
-            {
-server.send(200, "text/plain", "Filesystem Updated. Rebooting...");
-delay(1000);
-ESP.restart(); }, handleFSUpload); */
-
-  ElegantOTA.begin(&server); // Start ElegantOTA
-  server.begin();
+    ElegantOTA.begin(&server);
+    server.begin();
 }
-// ==== Setup function ====
+
+// ==== Setup ====
 void setup()
 {
-  // ==== Basic setup ====
-  Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  delay(500); // Allow time for serial to initialize
-  Serial.println("\n\n=== Starting CANuSEE ===");
-  // ==== OLED init ====
-  display.init();
-  display.clear();
-  display.setBrightness(0); // Start with backlight off for fade-in effect
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_16);
-  display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
-  // display.drawString(4, 8, "Fauwzk"); // Top left
-  // display.drawString(32, 24, "Engineering");
-  draw_BottomText(version_string);
-  display.display();
-  // ==== Fade in effect ====
-  for (int b = 0; b <= 255; b += 25)
-  {
-    display.setBrightness(b);
-    delay(30);
-  }
-  delay(500);
-  // display.clear();
-  // display.drawXbm(0, 0, 128, 64, epd_bitmap_logo_3008);
-  draw_BottomText("Starting...");
-  display.display();
-  delay(500);
+    Serial.begin(115200);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    delay(500);
 
-  // ==== EEPROM init ====
-  draw_BottomText("EEPROM Init");
-  display.display();
-  EEPROM.begin(EEPROM_SIZE);
-  draw_BottomText("EEPROM Init done");
-  display.display();
+    u8g2.begin();
+    u8g2.clearBuffer();
+    u8g2.setContrast(0);
+    u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+    draw_BottomText(version_string);
+    u8g2.sendBuffer();
 
-  // ==== Load settings from EEPROM ====
-  draw_BottomText("Loading Settings...");
-  display.display();
-  loadValues();
-
-  draw_BottomText("Mounting FS...");
-  display.display();
-  if (!LittleFS.begin())
-  {
-    Serial.println("LittleFS mount failed!");
-    displayInfo("FS Error!");
-    restart_ESP();
-  }
-  draw_BottomText("FS mounted");
-  display.display();
-  Serial.println("LittleFS mounted successfully");
-
-  draw_BottomText("Last screen: " + String(screenIndex + 1) + "/" + String(screenNumbers));
-  display.display();
-
-  if (digitalRead(BUTTON_PIN) == LOW)
-  {
-    displayInfo("Setup Mode");
-    delay(2000);
-    startServer();
-    while (true)
+    for (int b = 0; b <= 255; b += 25)
     {
-      if (digitalRead(BUTTON_PIN) == LOW)
-      {
-        displayInfo("Exiting Setup");
-        delay(1000);
+        u8g2.setContrast(b);
+        delay(30);
+    }
+    delay(500);
+
+    EEPROM.begin(EEPROM_SIZE);
+    loadValues();
+
+    if (!LittleFS.begin())
+    {
+        displayInfo("FS Error!");
+        delay(2000);
         restart_ESP();
-      }
-      server.handleClient();
-      ElegantOTA.loop();
-      dnsServer.processNextRequest();
-      drawHeartbeatSpinner();
-      display.display();
-      delay(10);
     }
-  }
-  // ==== Connect to Classic Bluetooth ELM327 ====
-  if (!SerialBT.begin("CANuSEE", true))
-  { // true = master mode
-    draw_BottomText("BT INIT FAIL");
-    display.invertDisplay();
-    display.display();
-    delay(10000);
-    restart_ESP();
-  }
-  draw_BottomText("BT Init done");
-  display.display();
-  SerialBT.setPin(ELM327_BT_PIN);
 
-  // Connect to the paired device by MAC address
-  draw_BottomText("BT Connecting...");
-  display.display();
-  if (!SerialBT.connect(elm_address, sec_mask, role))
-  {
-    if (!SerialBT.connect("ELMULATOR"))
+    // Setup mode override via button
+    if (digitalRead(BUTTON_PIN) == LOW)
     {
-      displayError("BT Conn FAIL");
-      delay(5000);
-      restart_ESP();
+        displayInfo("Setup Mode");
+        delay(2000);
+        startServer();
+        while (true)
+        {
+            if (digitalRead(BUTTON_PIN) == LOW)
+            {
+                displayInfo("Exiting Setup");
+                delay(1000);
+                restart_ESP();
+            }
+            server.handleClient();
+            ElegantOTA.loop();
+            dnsServer.processNextRequest();
+            drawHeartbeatSpinner();
+            u8g2.sendBuffer();
+            delay(10);
+        }
     }
-  }
-  draw_BottomText("BT Connected");
-  display.display();
 
-  // ==== ELM327 init ====
-  draw_BottomText("ELM327 Init...");
-  display.display();
-  if (!myELM327.begin(SerialBT, false, 2000))
-  {
-    displayError("ELM327 INIT FAIL");
-    delay(10000);
-    restart_ESP();
-  }
-  draw_BottomText("ELM327 Connected");
-  display.display();
+    // Bluetooth Init
+    displayInfo("BT Init...");
+    if (!SerialBT.begin("CANuSEE", true))
+    {
+        displayError("BT INIT FAIL");
+        delay(10000);
+        restart_ESP();
+    }
+    SerialBT.setPin(ELM327_BT_PIN);
 
-  draw_BottomText("ELM327 Config...");
-  display.display();
-  myELM327.sendCommand(SET_ISO_BAUD_10400);
-  myELM327.sendCommand(ALLOW_LONG_MESSAGES);
-  draw_BottomText("ELM327 Config done");
-  display.display();
+    displayInfo("BT Connecting...");
+    if (!SerialBT.connect(elm_address, sec_mask, role))
+    {
+        if (!SerialBT.connect("ELMULATOR"))
+        {
+            displayError("BT Conn FAIL");
+            delay(5000);
+            restart_ESP();
+        }
+    }
 
-  startServer();
-  fadeTransition(screenIndex);
+    displayInfo("ELM327 Init...");
+    if (!myELM327.begin(SerialBT, false, 2000))
+    {
+        displayError("ELM FAIL");
+        delay(10000);
+        restart_ESP();
+    }
+
+    myELM327.sendCommand(SET_ISO_BAUD_10400);
+    myELM327.sendCommand(ALLOW_LONG_MESSAGES);
+
+    startServer();
+    fadeTransition(screenIndex);
 }
 
-// ==== Main loop ====
+// ==== Main Loop ====
 void loop()
 {
-  server.handleClient();
-  ElegantOTA.loop();
-  dnsServer.processNextRequest();
+    server.handleClient();
+    ElegantOTA.loop();
+    dnsServer.processNextRequest();
 
-  static bool buttonPressed = false;
-  static unsigned long buttonPressTime = 0;
-  static bool longPressHandled = false;
+    static bool buttonPressed = false;
+    static unsigned long buttonPressTime = 0;
+    static bool longPressHandled = false;
 
-  // ==== Check button state ====
-  bool buttonState = (digitalRead(BUTTON_PIN) == LOW); // active LOW
+    bool buttonState = (digitalRead(BUTTON_PIN) == LOW); // active LOW
 
-  if (buttonState && !buttonPressed)
-  {
-    // Button just pressed
-    buttonPressed = true;
-    buttonPressTime = millis();
-    longPressHandled = false;
-  }
-
-  if (!buttonState && buttonPressed)
-  {
-    // Button just released
-    unsigned long pressDuration = millis() - buttonPressTime;
-    buttonPressed = false;
-
-    if (pressDuration < longPressDuration && (millis() - lastButtonPress) > debounceDelay)
+    if (buttonState && !buttonPressed)
     {
-      // ==== SHORT PRESS ====
-      lastButtonPress = millis();
-      myELM327.response = 0;
-      delay(100);
-      // Transition vers l’écran suivant une fois les données prêtes
-      fadeTransition((screenIndex + 1) % screenNumbers);
-      screenIndex = (screenIndex + 1) % screenNumbers;
-      cfg.last_screen = screenIndex;
-      EEPROM.put(0, cfg);
-      EEPROM.commit();
-      lastSwitch = millis();
+        buttonPressed = true;
+        buttonPressTime = millis();
+        longPressHandled = false;
     }
-  }
 
-  // ==== Handle long press ====
-  if (buttonPressed && !longPressHandled)
-  {
-    if (millis() - buttonPressTime > longPressDuration)
+    if (!buttonState && buttonPressed)
     {
-      if (screenIndex == 1)
-      {
-        // ==== LONG PRESS ACTION ====
-        BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
-        cfg.boost_screen_type = BOOST_SCREEN;
-        EEPROM.put(0, cfg);
-        EEPROM.commit();
-        display.display();
-        delay(1000);
-        longPressHandled = true;
-      }
-      else if (screenIndex == 3)
-      {
-        ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
-        cfg.engload_screen_type = ENGLOAD_SCREEN;
-        EEPROM.put(0, cfg);
-        EEPROM.commit();
-        display.display();
-        delay(1000);
-        longPressHandled = true;
-      }
-      else if (screenIndex == 4)
-      {
-        BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
-        cfg.battery_screen_type = BATTERY_SCREEN;
-        EEPROM.put(0, cfg);
-        EEPROM.commit();
-        display.display();
-        delay(1000);
-        longPressHandled = true;
-      }
-      else if (screenIndex == 5)
-      {
-        COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
-        cfg.coolant_screen_type = COOLANT_SCREEN;
-        EEPROM.put(0, cfg);
-        EEPROM.commit();
-        display.display();
-        delay(1000);
-        longPressHandled = true;
-      }
+        unsigned long pressDuration = millis() - buttonPressTime;
+        buttonPressed = false;
 
-      else if (screenIndex == 6)
-      {
-        resetDTCs();
-      }
-      else
-      {
-        // ==== LONG PRESS ACTION ====
-        displayInfo("Rebooting...");
-        display.display();
-        delay(1000);
-        restart_ESP();
-      }
+        if (pressDuration < longPressDuration && (millis() - lastButtonPress) > debounceDelay)
+        {
+            // SHORT PRESS (Next Screen)
+            lastButtonPress = millis();
+            myELM327.response = 0;
+            delay(100);
+            screenIndex = (screenIndex + 1) % screenNumbers;
+            fadeTransition(screenIndex);
+            cfg.last_screen = screenIndex;
+            EEPROM.put(0, cfg);
+            EEPROM.commit();
+            lastSwitch = millis();
+        }
     }
-  }
-  display.clear();
-  draw_GaugeScreen(screenIndex);
-  display.display();
 
-  delay(10);
+    if (buttonPressed && !longPressHandled)
+    {
+        if (millis() - buttonPressTime > longPressDuration)
+        {
+            // LONG PRESS (Toggle specific mode)
+            if (screenIndex == 1)
+            {
+                BOOST_SCREEN = (BOOST_SCREEN + 1) % ScreenTypes;
+                cfg.boost_screen_type = BOOST_SCREEN;
+            }
+            else if (screenIndex == 3)
+            {
+                ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % ScreenTypes;
+                cfg.engload_screen_type = ENGLOAD_SCREEN;
+            }
+            else if (screenIndex == 4)
+            {
+                BATTERY_SCREEN = (BATTERY_SCREEN + 1) % ScreenTypes;
+                cfg.battery_screen_type = BATTERY_SCREEN;
+            }
+            else if (screenIndex == 5)
+            {
+                COOLANT_SCREEN = (COOLANT_SCREEN + 1) % ScreenTypes;
+                cfg.coolant_screen_type = COOLANT_SCREEN;
+            }
+            else if (screenIndex == 6)
+            {
+                resetDTCs();
+            }
+            else
+            {
+                displayInfo("Rebooting...");
+                delay(1000);
+                restart_ESP();
+            }
+
+            EEPROM.put(0, cfg);
+            EEPROM.commit();
+            longPressHandled = true;
+
+            // Force instant redraw of toggled screen
+            if (screenIndex != 6)
+            {
+                u8g2.clearBuffer();
+                draw_GaugeScreen(screenIndex);
+                u8g2.sendBuffer();
+            }
+        }
+    }
+
+    u8g2.clearBuffer();
+    draw_GaugeScreen(screenIndex);
+    u8g2.sendBuffer();
+
+    delay(10);
 }
-
-// J'ai fini mon code.

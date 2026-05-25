@@ -1,0 +1,175 @@
+#include <Wire.h>
+#include <BluetoothSerial.h>
+#include "ELMduino.h"
+#include <U8g2lib.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <LittleFS.h>
+#include <FS.h>
+#include <DNSServer.h>
+#include "epd_bitmap_logo_3008.h"
+#include <ElegantOTA.h>
+#include "version.h"
+
+// ==== Include generated tcMenu file ====
+#include "CANuSEE_menu.h"
+
+// ==== WiFi & Web Server ====
+const char *ssid = "CANuSEE_Config";
+WebServer server(80);
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
+
+// ==== Settings Variables (Managed by tcMenu) ====
+int BOOST_SCREEN = 0; // 0 = text, 1 = gauge
+int ENGLOAD_SCREEN = 0;
+int BATTERY_SCREEN = 0;
+int COOLANT_SCREEN = 0;
+int IAT_SCREEN = 0;
+int TICK_LINE_GAUGE = 2;
+float TURBO_MIN_BAR = -0.7;
+float TURBO_MAX_BAR = 1.5;
+
+// ==== Dashboard refresh state ====
+uint8_t dashStep = 0;
+float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashLoad = 0;
+String version_string = "CANuSEE " FW_VERSION;
+
+// ==== OLED (U8g2) ====
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 22, 21);
+
+// ==== ELM327 Bluetooth ====
+BluetoothSerial SerialBT;
+#define ELM327_BT_PIN "1234"
+ELM327 myELM327;
+uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
+
+// ==== Coordinates & State ====
+const int centerX = 64;
+const int screenNumbers = 8;
+uint8_t screenIndex = 0;
+
+// ==== OBD-II Variables ====
+float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0;
+float engineLoad = 0.0, coolantTemp = 0.0, batteryVoltage = 0.0;
+float turboPressure = 0.0;
+
+// ==== Area Chart History Buffer ====
+#define AREA_CHART_HISTORY 105
+struct AreaChartData
+{
+  double values[AREA_CHART_HISTORY];
+  uint8_t currentIndex;
+  bool initialized;
+};
+AreaChartData turboHistory = {{0}, 0, false};
+AreaChartData loadHistory = {{0}, 0, false};
+AreaChartData batteryHistory = {{0}, 0, false};
+AreaChartData coolantHistory = {{0}, 0, false};
+AreaChartData iatHistory = {{0}, 0, false};
+
+// ==========================================
+// U8G2 HELPER FUNCTIONS (Translating coordinates)
+// ==========================================
+void drawStringCenter(int y, String text)
+{
+  int w = u8g2.getStrWidth(text.c_str());
+  u8g2.setCursor(centerX - (w / 2), y);
+  u8g2.print(text);
+}
+
+void drawStringLeft(int x, int y, String text)
+{
+  u8g2.setCursor(x, y);
+  u8g2.print(text);
+}
+
+String alignSign(String value)
+{
+  if (!value.startsWith("-"))
+    return " " + value;
+  return value;
+}
+
+String formatDecimal(double value, uint8_t decimals)
+{
+  String result = (value < 0) ? "-" : "";
+  value = abs(value);
+  result += String((int)value) + ".";
+  double decPart = value - (int)value;
+  for (int i = 0; i < decimals; i++)
+  {
+    decPart *= 10;
+    int digit = (int)decPart;
+    result += String(digit);
+    decPart -= digit;
+  }
+  return result;
+}
+
+// ==========================================
+// UI DRAWING FUNCTIONS
+// ==========================================
+
+void draw_BottomText(String text)
+{
+  u8g2.setFont(u8g2_font_helvB08_tr); // Approx 10px
+  u8g2.setDrawColor(1);
+  u8g2.drawFrame(0, 54, 128, 10);
+  u8g2.setDrawColor(0);
+  u8g2.drawBox(1, 55, 126, 8);
+  u8g2.setDrawColor(1);
+  drawStringCenter(63, text);
+}
+
+void draw_ScreenNumber(uint8_t index)
+{
+  u8g2.setFont(u8g2_font_helvB08_tr);
+  drawStringLeft(0, 63, String(index + 1) + "/" + String(screenNumbers));
+}
+
+void displayInfo(String msg)
+{
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_helvB18_tr); // 24px
+  drawStringCenter(30, "Info:");
+  draw_BottomText(msg);
+  u8g2.sendBuffer();
+}
+
+void draw_InfoText(String title, double value, String unit)
+{
+  draw_BottomText(version_string);
+  draw_ScreenNumber(screenIndex);
+
+  u8g2.setFont(u8g2_font_helvB12_tr); // 16px
+  drawStringCenter(16, title);
+
+  u8g2.setFont(u8g2_font_helvB18_tr); // 24px
+  String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
+  drawStringCenter(40, valStr + " " + unit);
+}
+
+void addValueToHistory(AreaChartData &history, double value, double minValue, double maxValue)
+{
+  if (value < minValue)
+    value = minValue;
+  if (value > maxValue)
+    value = maxValue;
+  history.values[history.currentIndex] = value;
+  history.currentIndex = (history.currentIndex + 1) % AREA_CHART_HISTORY;
+  if (history.currentIndex == 0)
+    history.initialized = true;
+}
+
+void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue, double maxValue, String label, String unit)
+{
+  addValueToHistory(history, newValue, minValue, maxValue);
+
+  int chartX = 20, chartY = 12, chartWidth = AREA_CHART_HISTORY, chartHeight = 35;
+  int baseY = chartY + chartHeight;
+  int labelX = 0;
+
+  u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
+
+  u8g2.setFont(u8g2_font_helvB
