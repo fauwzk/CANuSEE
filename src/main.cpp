@@ -122,6 +122,13 @@ void drawStringLeft(int x, int y, String text)
     u8g2.setCursor(x, y);
     u8g2.print(text);
 }
+// NEW HELPER: Aligns text so its right edge ends perfectly at 'x'
+void drawStringRight(int x, int y, String text)
+{
+    int w = u8g2.getStrWidth(text.c_str());
+    u8g2.setCursor(x - w, y);
+    u8g2.print(text);
+}
 
 // ==== HTML Generator ====
 String generateWebPage()
@@ -375,7 +382,6 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     int chartWidth = AREA_CHART_HISTORY;
     int chartHeight = 32; // Fit above the 48px yellow bar
     int baseY = chartY + chartHeight;
-    int labelX = 0;
 
     u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
     u8g2.setFont(u8g2_font_helvR08_tr);
@@ -398,9 +404,12 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     int minLabelY = baseY;                           // Touches absolute bottom
     int valCenterY = chartY + (chartHeight / 2) + 4; // Absolute middle
 
-    drawStringLeft(labelX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
-    drawStringLeft(labelX, minLabelY, alignSign(formatDecimal(minValue, 1)));
-    drawStringLeft(labelX, valCenterY, alignSign(formatDecimal(newValue, 1)));
+    // Use drawStringRight, ending perfectly 2 pixels away from the left border of the chart
+    int alignBorderX = chartX - 2;
+
+    drawStringRight(alignBorderX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
+    drawStringRight(alignBorderX, minLabelY, alignSign(formatDecimal(minValue, 1)));
+    drawStringRight(alignBorderX, valCenterY, alignSign(formatDecimal(newValue, 1)));
 
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
