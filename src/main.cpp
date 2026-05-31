@@ -566,6 +566,7 @@ void draw_GaugeScreen(uint8_t index)
         break;
 
     case 8: // Timer (0 to X km/h)
+    {
         tempVal = myELM327.kph();
         if (myELM327.nb_rx_state == ELM_SUCCESS)
         {
@@ -613,12 +614,16 @@ void draw_GaugeScreen(uint8_t index)
         u8g2.setFont(u8g2_font_helvR08_tr);
         drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
         break;
+    }
 
     case 9:
         // Show speed in kmh
         tempVal = myELM327.kph();
         if (myELM327.nb_rx_state == ELM_SUCCESS)
+        {
             currentSpeed = tempVal;
+        }
+
         draw_InfoText("Speed", currentSpeed, "km/h");
         break;
     }
