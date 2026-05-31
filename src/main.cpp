@@ -74,7 +74,7 @@ uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
 
 // ==== Coordinates & State ====
 const int centerX = 64;
-const int screenNumbers = 9;
+const int screenNumbers = 10;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
@@ -108,7 +108,7 @@ int menuCursor = 0;
 #define ACT_EDIT_SPEED 5
 #define ACT_GO_SCREEN_0 10
 
-const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer"};
+const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
 
 // ==== Text Alignment Helpers ====
 void drawStringCenter(int y, String text)
@@ -135,9 +135,29 @@ String generateWebPage()
 {
     File file = LittleFS.open("/index.html", "r");
     if (!file)
+    {
         return "<html><body><h3>File not found</h3></body></html>";
+    }
+
     String html = file.readString();
     file.close();
+
+    // Replace placeholders
+    html.replace("%MIN%", String(TURBO_MIN_BAR));
+    html.replace("%MAX%", String(TURBO_MAX_BAR));
+    html.replace("%VERSION%", version_string);
+    html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_VOLTAGE_TEXT%", (BATTERY_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_VOLTAGE_GAUGE%", (BATTERY_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+    html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
+    html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
+    html.replace("%TICKS%", String(TICK_LINE_GAUGE));
+    html.replace("%MAX_SPEED%", String(TARGET_SPEED));
     return html;
 }
 
@@ -592,6 +612,14 @@ void draw_GaugeScreen(uint8_t index)
 
         u8g2.setFont(u8g2_font_helvR08_tr);
         drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
+        break;
+
+    case 9:
+        // Show speed in kmh
+        tempVal = myELM327.kph();
+        if (myELM327.nb_rx_state == ELM_SUCCESS)
+            currentSpeed = tempVal;
+        draw_InfoText("Speed", currentSpeed, "km/h");
         break;
     }
 }
