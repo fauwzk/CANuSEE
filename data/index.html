@@ -161,10 +161,8 @@
         canvas {
             width: 100%;
             max-width: 256px;
-            /* Taille double (128x64 * 2) pour visibilité */
             height: auto;
             image-rendering: pixelated;
-            /* Look rétro */
             border: 1px solid #333;
         }
 
@@ -178,13 +176,9 @@
                 align-items: start;
             }
 
-            .card-preview {
+            .card-preview,
+            .card-global {
                 grid-column: span 2;
-            }
-
-            /* Le preview prend toute la largeur en haut */
-            .card-display-modes {
-                grid-row: span 3;
             }
 
             .action-buttons {
@@ -214,9 +208,23 @@
                 </p>
             </div>
 
-            <div class="card">
-                <h3>⚙️ Turbo Limits</h3>
-                <form action="/save" method="post" id="config-form">
+            <form action="/save" method="post" id="config-form" style="display: contents;">
+
+                <div class="card card-global">
+                    <h3>⚙️ Paramètres Globaux</h3>
+                    <div class="form-row">
+                        <label>Gauge Ticks</label>
+                        <input type="number" min="0" max="6" step="1" name="ticks" value="%TICKS%">
+                    </div>
+                    <div class="form-row">
+                        <label>Luminosité OLED</label>
+                        <input type="range" min="0" max="255" step="1" name="brightness" value="%BRIGHTNESS%"
+                            style="width: 110px;">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Écran 1 : Pression Turbo</h3>
                     <div class="form-row">
                         <label>Min Boost (bar)</label>
                         <input type="number" step="0.01" name="boost_min" value="%MIN%">
@@ -225,44 +233,72 @@
                         <label>Max Boost (bar)</label>
                         <input type="number" step="0.01" name="boost_max" value="%MAX%">
                     </div>
-            </div>
+                    <div class="form-row">
+                        <label>Affichage</label>
+                        <select name="boost_gauge_type">
+                            <option value="0" %SELECTED_BOOST_TEXT%>Texte</option>
+                            <option value="1" %SELECTED_BOOST_GAUGE%>Jauge</option>
+                        </select>
+                    </div>
+                </div>
 
-            <div class="card card-display-modes">
-                <h3>🖥️ Display Modes</h3>
-                <div class="form-row"><label>Boost Display</label><select name="boost_gauge_type">
-                        <option value="0" %SELECTED_BOOST_TEXT%>Text</option>
-                        <option value="1" %SELECTED_BOOST_GAUGE%>Gauge</option>
-                    </select></div>
-                <div class="form-row"><label>Engine Load</label><select name="engload_gauge_type">
-                        <option value="0" %SELECTED_LOAD_TEXT%>Text</option>
-                        <option value="1" %SELECTED_LOAD_GAUGE%>Gauge</option>
-                    </select></div>
-                <div class="form-row"><label>Battery Voltage</label><select name="voltage_gauge_type">
-                        <option value="0" %SELECTED_VOLTAGE_TEXT%>Text</option>
-                        <option value="1" %SELECTED_VOLTAGE_GAUGE%>Gauge</option>
-                    </select></div>
-                <div class="form-row"><label>Coolant Temp</label><select name="coolant_gauge_type">
-                        <option value="0" %SELECTED_COOLANT_TEXT%>Text</option>
-                        <option value="1" %SELECTED_COOLANT_GAUGE%>Gauge</option>
-                    </select></div>
-                <div class="form-row"><label>Intake Air Temp</label><select name="iat_gauge_type">
-                        <option value="0" %SELECTED_IAT_TEXT%>Text</option>
-                        <option value="1" %SELECTED_IAT_GAUGE%>Gauge</option>
-                    </select></div>
-            </div>
+                <div class="card">
+                    <h3>Écran 2 : Temp. Admission (IAT)</h3>
+                    <div class="form-row">
+                        <label>Affichage</label>
+                        <select name="iat_gauge_type">
+                            <option value="0" %SELECTED_IAT_TEXT%>Texte</option>
+                            <option value="1" %SELECTED_IAT_GAUGE%>Jauge</option>
+                        </select>
+                    </div>
+                </div>
 
-            <div class="card">
-                <h3>🎨 Gauge & Timer</h3>
-                <div class="form-row"><label>Gauge Ticks</label><input type="number" min="0" max="6" step="1"
-                        name="ticks" value="%TICKS%"></div>
-                <div class="form-row"><label>Target Speed</label><input type="number" min="0" max="300" step="10"
-                        name="max_speed" value="%MAX_SPEED%"></div>
-            </div>
+                <div class="card">
+                    <h3>Écran 3 : Charge Moteur</h3>
+                    <div class="form-row">
+                        <label>Affichage</label>
+                        <select name="engload_gauge_type">
+                            <option value="0" %SELECTED_LOAD_TEXT%>Texte</option>
+                            <option value="1" %SELECTED_LOAD_GAUGE%>Jauge</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Écran 4 : Tension Batterie</h3>
+                    <div class="form-row">
+                        <label>Affichage</label>
+                        <select name="voltage_gauge_type">
+                            <option value="0" %SELECTED_VOLTAGE_TEXT%>Texte</option>
+                            <option value="1" %SELECTED_VOLTAGE_GAUGE%>Jauge</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Écran 5 : Temp. LdR</h3>
+                    <div class="form-row">
+                        <label>Affichage</label>
+                        <select name="coolant_gauge_type">
+                            <option value="0" %SELECTED_COOLANT_TEXT%>Texte</option>
+                            <option value="1" %SELECTED_COOLANT_GAUGE%>Jauge</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Écran 8 : Chronomètre</h3>
+                    <div class="form-row">
+                        <label>Target Speed (km/h)</label>
+                        <input type="number" min="0" max="300" step="10" name="max_speed" value="%MAX_SPEED%">
+                    </div>
+                </div>
+
+            </form>
 
         </div>
 
         <button type="submit" form="config-form" class="btn-primary sticky-save">💾 Save Settings</button>
-        </form>
 
         <div class="card">
             <h3>🛠️ System Actions</h3>
@@ -280,31 +316,26 @@
         const screenNames = ["Pression MAF", "Pression Turbo", "Temp admission", "Charge moteur", "Tension Bat", "Temp LdR", "DTC Codes", "Dash", "Timer", "Speed"];
         const units = ["kPa", "Bar", "°C", "%", "V", "°C", "", "", "", "km/h"];
 
-        // Fonction d'aide pour centrer le texte
         function drawCenterText(text, y) {
             const width = ctx.measureText(text).width;
             ctx.fillText(text, 64 - (width / 2), y);
         }
 
-        // Dessin du bandeau du bas (BottomText)
         function drawBottomBar(screenIndex) {
             ctx.fillStyle = "white";
             ctx.fillRect(0, 48, 128, 16);
             ctx.fillStyle = "black";
             ctx.font = "10px monospace";
             drawCenterText("CANuSEE Web", 60);
-
-            // Draw page number
             ctx.fillText((screenIndex + 1) + "/10", 2, 60);
         }
 
-        // Fonction principale de dessin
         function renderOLED(data) {
-            // Fond noir
+            // 1. Dessiner l'interface normalement
+            ctx.globalAlpha = 1.0;
             ctx.fillStyle = "black";
             ctx.fillRect(0, 0, 128, 64);
 
-            // Variables selon l'écran
             let title = screenNames[data.screen] || "Unknown";
             let value = 0.0;
             let unit = units[data.screen] || "";
@@ -319,7 +350,6 @@
                 case 9: value = data.speed; break;
             }
 
-            // Dessin de l'interface "Texte" standard
             ctx.fillStyle = "white";
             ctx.font = "12px sans-serif";
             drawCenterText(title, 16);
@@ -329,13 +359,24 @@
             if (data.screen >= 0 && data.screen <= 5 || data.screen == 9) {
                 drawCenterText(valStr + " " + unit, 40);
             } else {
-                drawCenterText("Voir ESP32", 40); // Pour les écrans complexes (Dash/Timer)
+                drawCenterText("Voir ESP32", 40);
             }
 
             drawBottomBar(data.screen);
+
+            // 2. Appliquer la simulation de luminosité
+            // On s'attend à ce que data.brightness soit entre 0 (éteint) et 255 (max)
+            let brightness = data.brightness !== undefined ? data.brightness : 255;
+            let dimAlpha = 1.0 - (brightness / 255.0); // Calcule l'opacité du voile noir
+
+            if (dimAlpha > 0) {
+                ctx.globalAlpha = dimAlpha;
+                ctx.fillStyle = "black";
+                ctx.fillRect(0, 0, 128, 64);
+                ctx.globalAlpha = 1.0; // Reset pour le prochain rendu
+            }
         }
 
-        // Boucle de rafraîchissement (polling)
         async function fetchState() {
             try {
                 const response = await fetch('/api/state');
@@ -343,20 +384,19 @@
                 renderOLED(data);
             } catch (err) {
                 console.log("Waiting for ESP32...");
-                // Affichage d'erreur sur l'OLED virtuel
+                ctx.globalAlpha = 1.0;
                 ctx.fillStyle = "black"; ctx.fillRect(0, 0, 128, 64);
                 ctx.fillStyle = "white"; ctx.font = "12px sans-serif";
                 drawCenterText("Offline / Fetching...", 32);
             }
         }
 
-        // Initialisation et boucle (1000ms)
         ctx.fillStyle = "black"; ctx.fillRect(0, 0, 128, 64);
         ctx.fillStyle = "white"; ctx.font = "12px sans-serif";
         drawCenterText("Connecting...", 32);
 
         setInterval(fetchState, 1000);
-        fetchState(); // Premier appel immédiat
+        fetchState(); 
     </script>
 </body>
 

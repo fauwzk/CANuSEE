@@ -31,6 +31,7 @@ struct Settings
   int intake_temp_screen_type;
   int tick_line_gauge;
   int target_speed;
+  int brightness; // <--- NOUVEAU
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -43,6 +44,7 @@ int COOLANT_SCREEN = 0;
 int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
+int OLED_BRIGHTNESS = 255; // <--- NOUVEAU (255 = max)
 
 // ==== State Machine ====
 enum AppState
@@ -110,6 +112,12 @@ int menuCursor = 0;
 
 const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
 
+// ==== Contrôle de la luminosité physique ====
+void setOledBrightness(uint8_t b)
+{
+  u8g2.setContrast(b);
+}
+
 // ==== Text Alignment Helpers ====
 void drawStringCenter(int y, String text)
 {
@@ -122,7 +130,6 @@ void drawStringLeft(int x, int y, String text)
   u8g2.setCursor(x, y);
   u8g2.print(text);
 }
-// NEW HELPER: Aligns text so its right edge ends perfectly at 'x'
 void drawStringRight(int x, int y, String text)
 {
   int w = u8g2.getStrWidth(text.c_str());
@@ -158,6 +165,7 @@ String generateWebPage()
   html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
   html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   html.replace("%MAX_SPEED%", String(TARGET_SPEED));
+  html.replace("%BRIGHTNESS%", String(OLED_BRIGHTNESS)); // <--- NOUVEAU
   return html;
 }
 
@@ -174,6 +182,7 @@ void saveValues()
   cfg.intake_temp_screen_type = IAT_SCREEN;
   cfg.tick_line_gauge = TICK_LINE_GAUGE;
   cfg.target_speed = TARGET_SPEED;
+  cfg.brightness = OLED_BRIGHTNESS; // <--- NOUVEAU
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
@@ -191,6 +200,9 @@ void loadValues()
   IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < 2) ? cfg.intake_temp_screen_type : 0;
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
+
+  // NOUVEAU : Lecture sécurisée de la luminosité (évite un écran noir sur un ESP neuf)
+  OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
 }
 
 void restart_ESP()
@@ -206,14 +218,9 @@ void restart_ESP()
 // ==== UI Draw Helpers ====
 void draw_BottomText(String text)
 {
-  // Clears the bottom 16 pixels (Y=48 to 64) and draws text without a frame
   u8g2.setFont(u8g2_font_helvR08_tr);
-
-  // 1. Clear the background (Black)
   u8g2.setDrawColor(0);
   u8g2.drawBox(0, 48, 128, 16);
-
-  // 2. Draw the text (White)
   u8g2.setDrawColor(1);
   drawStringCenter(60, text);
 }
@@ -250,7 +257,7 @@ void draw_InfoText(String title, double value, String unit)
   drawStringCenter(16, title);
   u8g2.setFont(u8g2_font_helvR18_tr);
   String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
-  drawStringCenter(40, valStr + " " + unit); // Nudged up slightly
+  drawStringCenter(40, valStr + " " + unit);
 }
 
 // ==== Dynamic Menu Builder ====
@@ -260,7 +267,6 @@ void buildMenu()
   menuText[menuSize] = "Exit Menu";
   menuAction[menuSize++] = ACT_CLOSE;
 
-  // 1. Toggle Display Style Option
   if (screenIndex != 0 && screenIndex != 6 && screenIndex != 7 && screenIndex != 8)
   {
     String s = "Type: Text";
@@ -276,7 +282,6 @@ void buildMenu()
     menuAction[menuSize++] = ACT_TOGGLE_STYLE;
   }
 
-  // 2. Min/Max specific to Boost
   if (screenIndex == 1)
   {
     menuText[menuSize] = "Min: " + String(TURBO_MIN_BAR, 1);
@@ -285,21 +290,18 @@ void buildMenu()
     menuAction[menuSize++] = ACT_EDIT_MAX;
   }
 
-  // 3. Action specific to DTC
   if (screenIndex == 6)
   {
     menuText[menuSize] = "Reset DTCs";
     menuAction[menuSize++] = ACT_RESET_DTC;
   }
 
-  // 4. Config specific to Timer
   if (screenIndex == 8)
   {
     menuText[menuSize] = "Target: " + String(TARGET_SPEED);
     menuAction[menuSize++] = ACT_EDIT_SPEED;
   }
 
-  // 5. List all screens
   for (int i = 0; i < screenNumbers; i++)
   {
     menuText[menuSize] = "-> " + String(screenNames[i]);
@@ -323,7 +325,6 @@ void drawMenuScreen()
     startIdx = menuCursor - visibleItems + 1;
   }
 
-  // Tightly packed so 3 items fit above Y=48
   for (int i = 0; i < visibleItems; i++)
   {
     int itemIdx = startIdx + i;
@@ -357,7 +358,6 @@ void drawEditScreen(String title, String valueStr, String instruction)
 }
 
 // ==== History Buffers & Gauge Drawing ====
-// Reduced width to 94 to allow 32 pixels for side labels (fits "999.9")
 #define AREA_CHART_HISTORY 94
 struct AreaChartData
 {
@@ -396,11 +396,10 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   if (history.currentIndex == 0)
     history.initialized = true;
 
-  // Shifted chart 32 pixels right to make room for long labels
   int chartX = 32;
   int chartY = 12;
   int chartWidth = AREA_CHART_HISTORY;
-  int chartHeight = 32; // Fit above the 48px yellow bar
+  int chartHeight = 32;
   int baseY = chartY + chartHeight;
 
   u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
@@ -419,12 +418,9 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
-  // Perfectly centered side labels
-  int maxLabelY = chartY + 8;                      // Touches absolute top
-  int minLabelY = baseY;                           // Touches absolute bottom
-  int valCenterY = chartY + (chartHeight / 2) + 4; // Absolute middle
-
-  // Use drawStringRight, ending perfectly 2 pixels away from the left border of the chart
+  int maxLabelY = chartY + 8;
+  int minLabelY = baseY;
+  int valCenterY = chartY + (chartHeight / 2) + 4;
   int alignBorderX = chartX - 2;
 
   drawStringRight(alignBorderX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
@@ -617,13 +613,11 @@ void draw_GaugeScreen(uint8_t index)
   }
 
   case 9:
-    // Show speed in kmh
     tempVal = myELM327.kph();
     if (myELM327.nb_rx_state == ELM_SUCCESS)
     {
       currentSpeed = tempVal;
     }
-
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
   }
@@ -645,7 +639,36 @@ void startServer()
   server.on("/", HTTP_GET, []()
             { server.send(200, "text/html", generateWebPage()); });
 
-  // === NOUVELLE ROUTE API POUR LA SIMULATION ===
+  // === NOUVELLE ROUTE POUR SAUVEGARDER LE FORMULAIRE WEB ===
+  server.on("/save", HTTP_POST, []()
+            {
+      if (server.hasArg("brightness")) OLED_BRIGHTNESS = server.arg("brightness").toInt();
+      if (server.hasArg("ticks")) TICK_LINE_GAUGE = server.arg("ticks").toInt();
+      if (server.hasArg("max_speed")) TARGET_SPEED = server.arg("max_speed").toInt();
+      
+      if (server.hasArg("boost_min")) TURBO_MIN_BAR = server.arg("boost_min").toFloat();
+      if (server.hasArg("boost_max")) TURBO_MAX_BAR = server.arg("boost_max").toFloat();
+      
+      if (server.hasArg("boost_gauge_type")) BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
+      if (server.hasArg("iat_gauge_type")) IAT_SCREEN = server.arg("iat_gauge_type").toInt();
+      if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
+      if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
+      if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+
+      // Sécurité : contraindre la luminosité entre 0 et 255
+      OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
+      
+      // 1. Appliquer immédiatement à l'écran
+      setOledBrightness(OLED_BRIGHTNESS);
+      
+      // 2. Sauvegarder dans l'EEPROM
+      saveValues();
+
+      // 3. Rediriger vers l'accueil
+      server.sendHeader("Location", "/");
+      server.send(303); });
+
+  // === ROUTE API MISE À JOUR POUR LE SIMULATEUR ===
   server.on("/api/state", HTTP_GET, []()
             {
         String json = "{";
@@ -657,14 +680,13 @@ void startServer()
         json += "\"battery\":" + String(batteryVoltage) + ",";
         json += "\"coolant\":" + String(coolantTemp) + ",";
         json += "\"speed\":" + String(currentSpeed) + ",";
-        // On envoie aussi les configs pour savoir s'il faut dessiner une jauge ou du texte
         json += "\"boost_mode\":" + String(BOOST_SCREEN) + ",";
         json += "\"min_boost\":" + String(TURBO_MIN_BAR) + ",";
-        json += "\"max_boost\":" + String(TURBO_MAX_BAR);
+        json += "\"max_boost\":" + String(TURBO_MAX_BAR) + ",";
+        json += "\"brightness\":" + String(OLED_BRIGHTNESS); // <--- NOUVEAU
         json += "}";
         
         server.send(200, "application/json", json); });
-  // =============================================
 
   ElegantOTA.begin(&server);
   server.begin();
@@ -678,15 +700,20 @@ void setup()
   delay(500);
 
   u8g2.begin();
-  u8g2.setBusClock(400000); // <--- ADD THIS LINE FOR FASTER RENDERING
+  u8g2.setBusClock(400000);
+
+  EEPROM.begin(EEPROM_SIZE);
+  loadValues();
+
+  // Appliquer la luminosité sauvegardée dès le démarrage
+  setOledBrightness(OLED_BRIGHTNESS);
+
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText(version_string);
   u8g2.sendBuffer();
   delay(1500);
 
-  EEPROM.begin(EEPROM_SIZE);
-  loadValues();
   if (!LittleFS.begin())
   {
     displayInfo("FS Error!");
@@ -737,7 +764,6 @@ void loop()
   static unsigned long pressStartTime = 0;
   static bool longPressTriggered = false;
 
-  // 1. Check Button instantly (no longer blocked by the screen)
   int reading = digitalRead(BUTTON_PIN);
   if (reading != lastButtonState)
   {
@@ -758,7 +784,6 @@ void loop()
       {
         if (!longPressTriggered)
         {
-          // --- SHORT PRESS ACTIONS ---
           if (currentState == STATE_GAUGES)
           {
             screenIndex = (screenIndex + 1) % screenNumbers;
@@ -795,7 +820,6 @@ void loop()
       {
         longPressTriggered = true;
 
-        // --- LONG PRESS ACTIONS ---
         if (currentState == STATE_GAUGES)
         {
           buildMenu();
@@ -861,7 +885,6 @@ void loop()
   }
   lastButtonState = reading;
 
-  // ==== 2. Rate-Limited Screen Drawing Router ====
   static unsigned long lastDrawTime = 0;
   if (millis() - lastDrawTime > 10)
   {
