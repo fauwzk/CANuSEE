@@ -218,8 +218,14 @@
                     </div>
                     <div class="form-row">
                         <label>Luminosité OLED</label>
-                        <input type="range" min="0" max="255" step="1" name="brightness" value="%BRIGHTNESS%"
-                            style="width: 110px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <input type="range" min="0" max="100" step="1" name="brightness" value="%BRIGHTNESS_PCT%"
+                                oninput="document.getElementById('bright_val').innerText = this.value + '%'">
+                            <span id="bright_val"
+                                style="width: 40px; text-align: right; font-weight: bold; color: var(--accent);">
+                                %BRIGHTNESS_PCT%%
+                            </span>
+                        </div>
                     </div>
                 </div>
 

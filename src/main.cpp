@@ -31,7 +31,7 @@ struct Settings
   int intake_temp_screen_type;
   int tick_line_gauge;
   int target_speed;
-  int brightness; // <--- NOUVEAU
+  int brightness;
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -44,7 +44,7 @@ int COOLANT_SCREEN = 0;
 int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
-int OLED_BRIGHTNESS = 255; // <--- NOUVEAU (255 = max)
+int OLED_BRIGHTNESS = 255;
 
 // ==== State Machine ====
 enum AppState
@@ -53,14 +53,13 @@ enum AppState
   STATE_MENU,
   STATE_EDIT_MIN,
   STATE_EDIT_MAX,
-  STATE_EDIT_SPEED
+  STATE_EDIT_SPEED,
+  STATE_EDIT_BRIGHTNESS
 };
 AppState currentState = STATE_GAUGES;
 
 // ==== Dashboard refresh state ====
 uint8_t dashStep = 0;
-unsigned long dashLastUpdate = 0;
-const unsigned long dashDelay = 10;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashLoad = 0;
 
 String version_string = "CANuSEE " FW_VERSION;
@@ -108,11 +107,11 @@ int menuCursor = 0;
 #define ACT_EDIT_MAX 3
 #define ACT_RESET_DTC 4
 #define ACT_EDIT_SPEED 5
+#define ACT_EDIT_BRIGHTNESS 6
 #define ACT_GO_SCREEN_0 10
 
 const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
 
-// ==== Contrôle de la luminosité physique ====
 void setOledBrightness(uint8_t b)
 {
   u8g2.setContrast(b);
@@ -142,14 +141,10 @@ String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
   if (!file)
-  {
     return "<html><body><h3>File not found</h3></body></html>";
-  }
-
   String html = file.readString();
   file.close();
 
-  // Replace placeholders
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version_string);
@@ -165,7 +160,10 @@ String generateWebPage()
   html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
   html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   html.replace("%MAX_SPEED%", String(TARGET_SPEED));
-  html.replace("%BRIGHTNESS%", String(OLED_BRIGHTNESS)); // <--- NOUVEAU
+
+  // NOUVEAU : On convertit la valeur brute (0-255) en pourcentage (0-100) pour la page Web
+  int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
+  html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
   return html;
 }
 
@@ -182,7 +180,7 @@ void saveValues()
   cfg.intake_temp_screen_type = IAT_SCREEN;
   cfg.tick_line_gauge = TICK_LINE_GAUGE;
   cfg.target_speed = TARGET_SPEED;
-  cfg.brightness = OLED_BRIGHTNESS; // <--- NOUVEAU
+  cfg.brightness = OLED_BRIGHTNESS;
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
@@ -200,8 +198,6 @@ void loadValues()
   IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < 2) ? cfg.intake_temp_screen_type : 0;
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
-
-  // NOUVEAU : Lecture sécurisée de la luminosité (évite un écran noir sur un ESP neuf)
   OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
 }
 
@@ -234,15 +230,6 @@ void displayInfo(String msg)
   u8g2.sendBuffer();
 }
 
-void displayError(String msg)
-{
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_helvR18_tr);
-  drawStringCenter(30, "ERROR!");
-  draw_BottomText(msg);
-  u8g2.sendBuffer();
-}
-
 void draw_ScreenNumber(uint8_t index)
 {
   u8g2.setFont(u8g2_font_helvR08_tr);
@@ -266,6 +253,9 @@ void buildMenu()
   menuSize = 0;
   menuText[menuSize] = "Exit Menu";
   menuAction[menuSize++] = ACT_CLOSE;
+
+  menuText[menuSize] = "Brightness";
+  menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
 
   if (screenIndex != 0 && screenIndex != 6 && screenIndex != 7 && screenIndex != 8)
   {
@@ -330,7 +320,6 @@ void drawMenuScreen()
     int itemIdx = startIdx + i;
     if (itemIdx >= menuSize)
       break;
-
     int yPos = 24 + (i * 11);
     if (itemIdx == menuCursor)
     {
@@ -339,9 +328,8 @@ void drawMenuScreen()
       u8g2.setDrawColor(0);
     }
     else
-    {
       u8g2.setDrawColor(1);
-    }
+
     drawStringCenter(yPos, menuText[itemIdx]);
     u8g2.setDrawColor(1);
   }
@@ -431,120 +419,162 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
-// ==== OBD Fetching and Screens ====
-void draw_GaugeScreen(uint8_t index)
+// ==== Non-blocking OBD Fetch ====
+void fetchOBDData()
 {
   float tempVal;
 
-  switch (index)
+  switch (screenIndex)
   {
-  case 0: // MAF
+  case 0:
     tempVal = myELM327.manifoldPressure();
     if (myELM327.nb_rx_state == ELM_SUCCESS)
       mafPressure = tempVal;
-    draw_InfoText("Pression MAF", mafPressure, "kPa");
     break;
-
-  case 1: // Boost
+  case 1:
     tempVal = myELM327.manifoldPressure();
     if (myELM327.nb_rx_state == ELM_SUCCESS)
       turboPressureState = (tempVal - 100) * 0.01;
+    break;
+  case 2:
+    tempVal = myELM327.intakeAirTemp();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+      intakeTemp = tempVal;
+    break;
+  case 3:
+    tempVal = myELM327.engineLoad();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+      engineLoad = tempVal;
+    break;
+  case 4:
+    tempVal = myELM327.batteryVoltage();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+      batteryVoltage = tempVal - 2.0;
+    break;
+  case 5:
+    tempVal = myELM327.engineCoolantTemp();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+      coolantTemp = tempVal;
+    break;
+  case 6: // DTC
+  {
+    static unsigned long lastDTCRequest = 0;
+    if (millis() - lastDTCRequest > 5000)
+    {
+      myELM327.currentDTCCodes(false);
+      if (myELM327.nb_rx_state == ELM_SUCCESS)
+        lastDTCRequest = millis();
+    }
+  }
+  break;
+  case 7: // Dash
+    switch (dashStep)
+    {
+    case 0:
+      tempVal = myELM327.manifoldPressure();
+      if (myELM327.nb_rx_state == ELM_SUCCESS)
+        dashBoost = (tempVal - 100) * 0.01;
+      dashStep++;
+      break;
+    case 1:
+      tempVal = myELM327.intakeAirTemp();
+      if (myELM327.nb_rx_state == ELM_SUCCESS)
+        dashIAT = tempVal;
+      dashStep++;
+      break;
+    case 2:
+      tempVal = myELM327.engineCoolantTemp();
+      if (myELM327.nb_rx_state == ELM_SUCCESS)
+        dashCoolant = tempVal;
+      dashStep++;
+      break;
+    case 3:
+      tempVal = myELM327.engineLoad();
+      if (myELM327.nb_rx_state == ELM_SUCCESS)
+        dashLoad = tempVal;
+      dashStep = 0;
+      break;
+    }
+    break;
+  case 8: // Timer
+  case 9: // Speed
+    tempVal = myELM327.kph();
+    if (myELM327.nb_rx_state == ELM_SUCCESS)
+    {
+      currentSpeed = tempVal;
+      if (screenIndex == 8)
+      {
+        if (currentSpeed <= 0)
+        {
+          timerReady = true;
+          timerRunning = false;
+        }
+        else if (timerReady && !timerRunning && currentSpeed > 0)
+        {
+          timerRunning = true;
+          speedTimerStart = millis();
+        }
+        else if (timerRunning && currentSpeed >= TARGET_SPEED)
+        {
+          timerRunning = false;
+          timerReady = false;
+          lastTimerValue = (millis() - speedTimerStart) / 1000.0;
+        }
+      }
+    }
+    break;
+  }
+}
+
+void draw_GaugeScreen(uint8_t index)
+{
+  switch (index)
+  {
+  case 0:
+    draw_InfoText("Pression MAF", mafPressure, "kPa");
+    break;
+  case 1:
     if (BOOST_SCREEN == 0)
       draw_InfoText("Pression Turbo", turboPressureState, "Bar");
     else
       draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
     break;
-
-  case 2: // IAT
-    tempVal = myELM327.intakeAirTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      intakeTemp = tempVal;
+  case 2:
     if (IAT_SCREEN == 0)
       draw_InfoText("Temp admission", intakeTemp, "°C");
     else
       draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp admission", "°C");
     break;
-
-  case 3: // Load
-    tempVal = myELM327.engineLoad();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      engineLoad = tempVal;
+  case 3:
     if (ENGLOAD_SCREEN == 0)
       draw_InfoText("Charge moteur", engineLoad, "%");
     else
       draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge moteur", "%");
     break;
-
-  case 4: // Battery
-    tempVal = myELM327.batteryVoltage();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      batteryVoltage = tempVal - 2.0;
+  case 4:
     if (BATTERY_SCREEN == 0)
       draw_InfoText("Tension Bat", batteryVoltage, "V");
     else
       draw_AreaChartWithHistory(batteryHistory, batteryVoltage, 9.0, 15.0, "Tension Bat", "V");
     break;
-
-  case 5: // Coolant
-    tempVal = myELM327.engineCoolantTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      coolantTemp = tempVal;
+  case 5:
     if (COOLANT_SCREEN == 0)
       draw_InfoText("Temp LdR", coolantTemp, "°C");
     else
       draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
     break;
-
-  case 6: // DTC
-    myELM327.currentDTCCodes(false);
+  case 6:
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(16, "DTC Codes:");
     u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
+    if (myELM327.DTC_Response.codesFound == 0)
+      drawStringCenter(40, "No DTC Codes");
+    else
+      drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
     break;
-
-  case 7: // Dash
-    if (millis() - dashLastUpdate >= dashDelay)
-    {
-      dashLastUpdate = millis();
-      switch (dashStep)
-      {
-      case 0:
-        tempVal = myELM327.manifoldPressure();
-        if (myELM327.nb_rx_state == ELM_SUCCESS)
-        {
-          dashBoost = (tempVal - 100) * 0.01;
-          dashStep++;
-        }
-        break;
-      case 1:
-        tempVal = myELM327.intakeAirTemp();
-        if (myELM327.nb_rx_state == ELM_SUCCESS)
-        {
-          dashIAT = tempVal;
-          dashStep++;
-        }
-        break;
-      case 2:
-        tempVal = myELM327.engineCoolantTemp();
-        if (myELM327.nb_rx_state == ELM_SUCCESS)
-        {
-          dashCoolant = tempVal;
-          dashStep++;
-        }
-        break;
-      case 3:
-        tempVal = myELM327.engineLoad();
-        if (myELM327.nb_rx_state == ELM_SUCCESS)
-        {
-          dashLoad = tempVal;
-          dashStep = 0;
-        }
-        break;
-      }
-    }
+  case 7:
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringLeft(0, 12, "BOOST:");
     drawStringLeft(0, 22, String(dashBoost, 2) + " bar");
@@ -557,64 +587,20 @@ void draw_GaugeScreen(uint8_t index)
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
     break;
-
-  case 8: // Timer (0 to X km/h)
-  {
-    tempVal = myELM327.kph();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      currentSpeed = tempVal;
-      if (currentSpeed <= 0)
-      {
-        timerReady = true;
-        timerRunning = false;
-      }
-      else if (timerReady && !timerRunning && currentSpeed > 0)
-      {
-        timerRunning = true;
-        speedTimerStart = millis();
-      }
-      else if (timerRunning && currentSpeed >= TARGET_SPEED)
-      {
-        timerRunning = false;
-        timerReady = false;
-        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
-      }
-    }
-
-    float displayTime = lastTimerValue;
-    if (timerRunning)
-    {
-      displayTime = (millis() - speedTimerStart) / 1000.0;
-    }
-
+  case 8:
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
-
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(14, "0 - " + String(TARGET_SPEED) + " km/h");
-
     u8g2.setFont(u8g2_font_helvR18_tr);
-    if (timerReady && !timerRunning && displayTime == 0.0)
-    {
+    if (timerReady && !timerRunning && (timerRunning ? ((millis() - speedTimerStart) / 1000.0) : lastTimerValue) == 0.0)
       drawStringCenter(36, "READY");
-    }
     else
-    {
-      drawStringCenter(36, String(displayTime, 2) + " s");
-    }
-
+      drawStringCenter(36, String(timerRunning ? ((millis() - speedTimerStart) / 1000.0) : lastTimerValue, 2) + " s");
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
     break;
-  }
-
   case 9:
-    tempVal = myELM327.kph();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      currentSpeed = tempVal;
-    }
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
   }
@@ -632,40 +618,31 @@ void startCaptivePortal()
 void startServer()
 {
   startCaptivePortal();
-
   server.on("/", HTTP_GET, []()
             { server.send(200, "text/html", generateWebPage()); });
-
-  // === NOUVELLE ROUTE POUR SAUVEGARDER LE FORMULAIRE WEB ===
   server.on("/save", HTTP_POST, []()
             {
-      if (server.hasArg("brightness")) OLED_BRIGHTNESS = server.arg("brightness").toInt();
+      // ==== NOUVEAU: Map de la valeur 0-100 (depuis le form web) vers 0-255 (matériel) ====
+      if (server.hasArg("brightness")) {
+          int pct = server.arg("brightness").toInt();
+          OLED_BRIGHTNESS = map(pct, 0, 100, 0, 255);
+      }
+      
       if (server.hasArg("ticks")) TICK_LINE_GAUGE = server.arg("ticks").toInt();
       if (server.hasArg("max_speed")) TARGET_SPEED = server.arg("max_speed").toInt();
-      
       if (server.hasArg("boost_min")) TURBO_MIN_BAR = server.arg("boost_min").toFloat();
       if (server.hasArg("boost_max")) TURBO_MAX_BAR = server.arg("boost_max").toFloat();
-      
       if (server.hasArg("boost_gauge_type")) BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
       if (server.hasArg("iat_gauge_type")) IAT_SCREEN = server.arg("iat_gauge_type").toInt();
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
 
-      // Sécurité : contraindre la luminosité entre 0 et 255
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
-      
-      // 1. Appliquer immédiatement à l'écran
       setOledBrightness(OLED_BRIGHTNESS);
-      
-      // 2. Sauvegarder dans l'EEPROM
       saveValues();
-
-      // 3. Rediriger vers l'accueil
       server.sendHeader("Location", "/");
       server.send(303); });
-
-  // === ROUTE API MISE À JOUR POUR LE SIMULATEUR ===
   server.on("/api/state", HTTP_GET, []()
             {
         String json = "{";
@@ -680,9 +657,8 @@ void startServer()
         json += "\"boost_mode\":" + String(BOOST_SCREEN) + ",";
         json += "\"min_boost\":" + String(TURBO_MIN_BAR) + ",";
         json += "\"max_boost\":" + String(TURBO_MAX_BAR) + ",";
-        json += "\"brightness\":" + String(OLED_BRIGHTNESS); // <--- NOUVEAU
+        json += "\"brightness\":" + String(OLED_BRIGHTNESS);
         json += "}";
-        
         server.send(200, "application/json", json); });
 
   ElegantOTA.begin(&server);
@@ -697,7 +673,7 @@ void setup()
   delay(500);
 
   u8g2.begin();
-  u8g2.setBusClock(400000); // Horloge I2C Rapide
+  u8g2.setBusClock(400000);
 
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
@@ -734,20 +710,16 @@ void setup()
   }
 
   displayInfo("ELM327 Init...");
-  // TIMEOUT REDUIT À 500ms ! (Empêche les freezes longs si perte de signal)
   if (!myELM327.begin(SerialBT, false, 500))
   {
     delay(2000);
     restart_ESP();
-  }
+  } // Timeout rapide
 
-  // ==========================================
-  // OPTIMISATIONS DE VITESSE ELM327
-  // ==========================================
-  myELM327.sendCommand("AT AT2");           // Adaptive Timing Agressif (Coupe l'attente ECU)
-  myELM327.sendCommand("AT S0");            // Supprime les espaces dans les trames (plus léger)
-  myELM327.sendCommand("AT H0");            // Supprime les headers OBD (plus léger)
-  myELM327.sendCommand(SET_ISO_BAUD_10400); // Ton baudrate spécifique
+  myELM327.sendCommand("AT AT2");
+  myELM327.sendCommand("AT S0");
+  myELM327.sendCommand("AT H0");
+  myELM327.sendCommand(SET_ISO_BAUD_10400);
   myELM327.sendCommand(ALLOW_LONG_MESSAGES);
 
   startServer();
@@ -760,6 +732,13 @@ void loop()
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
+  // 1. REQUETES OBD (Tourne en boucle très vite, sans blocage graphique)
+  if (currentState == STATE_GAUGES)
+  {
+    fetchOBDData();
+  }
+
+  // 2. LECTURE DU BOUTON
   static int buttonState = HIGH;
   static int lastButtonState = HIGH;
   static unsigned long lastDebounceTime = 0;
@@ -768,9 +747,7 @@ void loop()
 
   int reading = digitalRead(BUTTON_PIN);
   if (reading != lastButtonState)
-  {
     lastDebounceTime = millis();
-  }
 
   if ((millis() - lastDebounceTime) > 50)
   {
@@ -786,15 +763,14 @@ void loop()
       {
         if (!longPressTriggered)
         {
+          // --- APPUI COURT ---
           if (currentState == STATE_GAUGES)
           {
             screenIndex = (screenIndex + 1) % screenNumbers;
             saveValues();
           }
           else if (currentState == STATE_MENU)
-          {
             menuCursor = (menuCursor + 1) % menuSize;
-          }
           else if (currentState == STATE_EDIT_MIN)
           {
             TURBO_MIN_BAR += 0.1;
@@ -813,6 +789,14 @@ void loop()
             if (TARGET_SPEED > 150)
               TARGET_SPEED = 40;
           }
+          else if (currentState == STATE_EDIT_BRIGHTNESS)
+          {
+            // NOUVEAU : Incrémente par paliers (environ +20% à chaque clic)
+            OLED_BRIGHTNESS += 51;
+            if (OLED_BRIGHTNESS > 255)
+              OLED_BRIGHTNESS = 0;
+            setOledBrightness(OLED_BRIGHTNESS); // Application instantanée
+          }
         }
       }
     }
@@ -821,7 +805,7 @@ void loop()
       if ((millis() - pressStartTime) > 800)
       {
         longPressTriggered = true;
-
+        // --- APPUI LONG ---
         if (currentState == STATE_GAUGES)
         {
           buildMenu();
@@ -830,11 +814,8 @@ void loop()
         else if (currentState == STATE_MENU)
         {
           int action = menuAction[menuCursor];
-
           if (action == ACT_CLOSE)
-          {
             currentState = STATE_GAUGES;
-          }
           else if (action == ACT_TOGGLE_STYLE)
           {
             if (screenIndex == 1)
@@ -851,17 +832,13 @@ void loop()
             buildMenu();
           }
           else if (action == ACT_EDIT_MIN)
-          {
             currentState = STATE_EDIT_MIN;
-          }
           else if (action == ACT_EDIT_MAX)
-          {
             currentState = STATE_EDIT_MAX;
-          }
           else if (action == ACT_EDIT_SPEED)
-          {
             currentState = STATE_EDIT_SPEED;
-          }
+          else if (action == ACT_EDIT_BRIGHTNESS)
+            currentState = STATE_EDIT_BRIGHTNESS;
           else if (action == ACT_RESET_DTC)
           {
             displayInfo("Resetting...");
@@ -876,7 +853,7 @@ void loop()
             currentState = STATE_GAUGES;
           }
         }
-        else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED)
+        else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
         {
           saveValues();
           buildMenu();
@@ -887,31 +864,29 @@ void loop()
   }
   lastButtonState = reading;
 
+  // 3. RAFRAÎCHISSEMENT DE L'ÉCRAN
   static unsigned long lastDrawTime = 0;
-  if (millis() - lastDrawTime > 10)
+  if (millis() - lastDrawTime > 30)
   {
     lastDrawTime = millis();
     u8g2.clearBuffer();
 
     if (currentState == STATE_GAUGES)
-    {
       draw_GaugeScreen(screenIndex);
-    }
     else if (currentState == STATE_MENU)
-    {
       drawMenuScreen();
-    }
     else if (currentState == STATE_EDIT_MIN)
-    {
       drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "Short: +0.1 | Long: Save");
-    }
     else if (currentState == STATE_EDIT_MAX)
-    {
       drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "Short: +0.1 | Long: Save");
-    }
     else if (currentState == STATE_EDIT_SPEED)
-    {
       drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "Short: +10 | Long: Save");
+
+    // NOUVEAU : Dessine l'écran d'édition de luminosité en affichant un pourcentage (0-100%)
+    else if (currentState == STATE_EDIT_BRIGHTNESS)
+    {
+      int brightPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
+      drawEditScreen("Brightness", String(brightPct) + " %", "Short: + | Long: Save");
     }
 
     u8g2.sendBuffer();
