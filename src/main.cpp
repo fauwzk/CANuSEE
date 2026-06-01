@@ -700,12 +700,10 @@ void setup()
   delay(500);
 
   u8g2.begin();
-  u8g2.setBusClock(400000);
+  u8g2.setBusClock(400000); // Horloge I2C Rapide
 
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
-
-  // Appliquer la luminosité sauvegardée dès le démarrage
   setOledBrightness(OLED_BRIGHTNESS);
 
   u8g2.clearBuffer();
@@ -720,7 +718,6 @@ void setup()
     delay(2000);
     restart_ESP();
   }
-
   displayInfo("BT Init...");
   if (!SerialBT.begin("CANuSEE", true))
   {
@@ -740,12 +737,20 @@ void setup()
   }
 
   displayInfo("ELM327 Init...");
-  if (!myELM327.begin(SerialBT, false, 2000))
+  // TIMEOUT REDUIT À 500ms ! (Empêche les freezes longs si perte de signal)
+  if (!myELM327.begin(SerialBT, false, 500))
   {
     delay(2000);
     restart_ESP();
   }
-  myELM327.sendCommand(SET_ISO_BAUD_10400);
+
+  // ==========================================
+  // OPTIMISATIONS DE VITESSE ELM327
+  // ==========================================
+  myELM327.sendCommand("AT AT2");           // Adaptive Timing Agressif (Coupe l'attente ECU)
+  myELM327.sendCommand("AT S0");            // Supprime les espaces dans les trames (plus léger)
+  myELM327.sendCommand("AT H0");            // Supprime les headers OBD (plus léger)
+  myELM327.sendCommand(SET_ISO_BAUD_10400); // Ton baudrate spécifique
   myELM327.sendCommand(ALLOW_LONG_MESSAGES);
 
   startServer();
