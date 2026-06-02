@@ -567,10 +567,7 @@ void draw_GaugeScreen(uint8_t index)
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(16, "DTC Codes:");
     u8g2.setFont(u8g2_font_helvR18_tr);
-    if (myELM327.DTC_Response.codesFound == 0)
-      drawStringCenter(40, "No DTC Codes");
-    else
-      drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
+    drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
     break;
