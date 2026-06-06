@@ -912,7 +912,7 @@ void loop()
 
   // 3. RAFRAÎCHISSEMENT DE L'ÉCRAN
   static unsigned long lastDrawTime = 0;
-  if (millis() - lastDrawTime > 16) // Environ 60 FPS, mais on peut ajuster si besoin
+  if (millis() - lastDrawTime > 32) // Environ 30 FPS
   {
     lastDrawTime = millis();
     u8g2.clearBuffer();
