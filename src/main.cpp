@@ -896,8 +896,6 @@ void loop()
       drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "Short: +0.1 | Long: Save");
     else if (currentState == STATE_EDIT_SPEED)
       drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "Short: +10 | Long: Save");
-
-    // NOUVEAU : Dessine l'écran d'édition de luminosité en affichant un pourcentage (0-100%)
     else if (currentState == STATE_EDIT_BRIGHTNESS)
     {
       int brightPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
