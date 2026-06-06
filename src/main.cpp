@@ -211,10 +211,10 @@ void restart_ESP()
   ESP.restart();
 }
 
-// ==== UI Draw Helpers ====
 void draw_BottomText(String text)
 {
-  u8g2.setFont(u8g2_font_helvR08_tr);
+  // Utilisation d'une police plus petite (5x7) au lieu de helvR08
+  u8g2.setFont(u8g2_font_5x7_tr);
   u8g2.setDrawColor(0);
   u8g2.drawBox(0, 48, 128, 16);
   u8g2.setDrawColor(1);
@@ -232,7 +232,8 @@ void displayInfo(String msg)
 
 void draw_ScreenNumber(uint8_t index)
 {
-  u8g2.setFont(u8g2_font_helvR08_tr);
+  // On harmonise la taille avec la bottombar
+  u8g2.setFont(u8g2_font_5x7_tr);
   drawStringLeft(2, 60, String(index + 1) + "/" + String(screenNumbers));
 }
 
