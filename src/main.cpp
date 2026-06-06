@@ -143,7 +143,11 @@ String generateWebPage()
   if (!file)
     return "<html><body><h3>File not found</h3></body></html>";
   String html = file.readString();
+
   file.close();
+
+  // On réserve de la mémoire supplémentaire pour éviter la fragmentation lors des remplacements
+  html.reserve(html.length() + 1024);
 
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
@@ -931,4 +935,5 @@ void loop()
 
     u8g2.sendBuffer();
   }
+  yield();
 }
