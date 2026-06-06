@@ -401,7 +401,7 @@
         ctx.fillStyle = "white"; ctx.font = "12px sans-serif";
         drawCenterText("Connecting...", 32);
 
-        setInterval(fetchState, 1000);
+        setInterval(fetchState, 5000); // Rafraîchit toutes les 5 secondes
         fetchState(); 
     </script>
 </body>
