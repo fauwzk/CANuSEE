@@ -213,12 +213,22 @@ void restart_ESP()
 
 void draw_BottomText(String text)
 {
-  // Utilisation d'une police plus petite (5x7) au lieu de helvR08
-  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.setFont(u8g2_font_5x7_tr); // On garde la petite police pour la propreté
   u8g2.setDrawColor(0);
   u8g2.drawBox(0, 48, 128, 16);
   u8g2.setDrawColor(1);
-  drawStringCenter(60, text);
+
+  // Si on demande d'afficher la version du programme
+  if (text == version_string)
+  {
+    drawStringCenter(60, "CANuSEE");              // Titre au centre
+    drawStringRight(126, 60, String(FW_VERSION)); // Version calée à droite (126 pour ne pas toucher le bord)
+  }
+  else
+  {
+    // Pour tous les autres messages (ex: "Short: Scroll..."), on centre
+    drawStringCenter(60, text);
+  }
 }
 
 void displayInfo(String msg)
@@ -301,12 +311,15 @@ void buildMenu()
   menuCursor = 0;
 }
 
-// ==== Drawing Screens (Menu & Edit) ====
 void drawMenuScreen()
 {
   u8g2.setFont(u8g2_font_helvR10_tr);
-  drawStringCenter(10, "MENU");
-  u8g2.drawLine(0, 12, 128, 12);
+
+  // On descend le texte à 12 (au lieu de 10) pour lui donner de l'air en haut
+  drawStringCenter(12, "MENU");
+
+  // On descend la ligne à 14 (au lieu de 12) pour qu'elle ne coupe pas le texte
+  u8g2.drawLine(0, 14, 128, 14);
 
   u8g2.setFont(u8g2_font_helvR08_tr);
   int visibleItems = 3;
@@ -321,7 +334,11 @@ void drawMenuScreen()
     int itemIdx = startIdx + i;
     if (itemIdx >= menuSize)
       break;
+
+    // On garde Y=24 pour le premier item, son cadre de sélection
+    // commencera à Y=15, ce qui laisse juste 1 pixel sous la ligne de séparation !
     int yPos = 24 + (i * 11);
+
     if (itemIdx == menuCursor)
     {
       u8g2.setDrawColor(1);
