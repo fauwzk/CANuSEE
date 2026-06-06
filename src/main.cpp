@@ -715,13 +715,40 @@ void setup()
   SerialBT.setPin(ELM327_BT_PIN);
 
   displayInfo("Connecting...");
-  if (!SerialBT.connect(elm_address, sec_mask, role))
+
+  bool connected = false;
+  int retries = 0;
+  int maxRetries = 5; // Tu peux changer le nombre maximum d'essais ici
+
+  while (!connected && retries < maxRetries)
   {
-    if (!SerialBT.connect("ELMULATOR"))
+    // Affiche la tentative sur l'écran à partir du 2ème essai
+    if (retries > 0)
     {
-      delay(2000);
-      restart_ESP();
+      displayInfo("Retry " + String(retries) + "/" + String(maxRetries));
+      delay(1000); // Laisse un peu de temps au module BT de la voiture
     }
+
+    // 1. On tente d'abord la connexion via l'adresse MAC
+    if (SerialBT.connect(elm_address, sec_mask, role))
+    {
+      connected = true;
+    }
+    // 2. Si ça échoue, on tente la connexion via le nom
+    else if (SerialBT.connect("ELMULATOR"))
+    {
+      connected = true;
+    }
+
+    retries++;
+  }
+
+  // Si on sort de la boucle et qu'on n'est toujours pas connecté
+  if (!connected)
+  {
+    displayInfo("BT Failed!");
+    delay(2000);
+    restart_ESP();
   }
 
   displayInfo("ELM327 Init...");
