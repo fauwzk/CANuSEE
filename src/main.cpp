@@ -87,6 +87,10 @@ esp_spp_role_t role = ESP_SPP_ROLE_MASTER;
 float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0;
 float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 
+// ==== Variables DTC ====
+String dtcCodes[15]; // Capacité augmentée à 15 codes
+int dtcCountFound = 0;
+
 // ==== Timer State ====
 bool timerRunning = false;
 bool timerReady = false;
@@ -146,7 +150,7 @@ String generateWebPage()
 
   file.close();
 
-  // On réserve de la mémoire supplémentaire pour éviter la fragmentation lors des remplacements
+  // Optimisation de la mémoire pour éviter la fragmentation
   html.reserve(html.length() + 1024);
 
   html.replace("%MIN%", String(TURBO_MIN_BAR));
@@ -165,7 +169,6 @@ String generateWebPage()
   html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   html.replace("%MAX_SPEED%", String(TARGET_SPEED));
 
-  // NOUVEAU : On convertit la valeur brute (0-255) en pourcentage (0-100) pour la page Web
   int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
   html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
   return html;
@@ -217,20 +220,18 @@ void restart_ESP()
 
 void draw_BottomText(String text)
 {
-  u8g2.setFont(u8g2_font_5x7_tr); // On garde la petite police pour la propreté
+  u8g2.setFont(u8g2_font_5x7_tr);
   u8g2.setDrawColor(0);
   u8g2.drawBox(0, 48, 128, 16);
   u8g2.setDrawColor(1);
 
-  // Si on demande d'afficher la version du programme
   if (text == version_string)
   {
-    drawStringCenter(60, "CANuSEE");              // Titre au centre
-    drawStringRight(126, 60, String(FW_VERSION)); // Version calée à droite (126 pour ne pas toucher le bord)
+    drawStringCenter(60, "CANuSEE");
+    drawStringRight(126, 60, String(FW_VERSION));
   }
   else
   {
-    // Pour tous les autres messages (ex: "Short: Scroll..."), on centre
     drawStringCenter(60, text);
   }
 }
@@ -246,7 +247,6 @@ void displayInfo(String msg)
 
 void draw_ScreenNumber(uint8_t index)
 {
-  // On harmonise la taille avec la bottombar
   u8g2.setFont(u8g2_font_5x7_tr);
   drawStringLeft(2, 60, String(index + 1) + "/" + String(screenNumbers));
 }
@@ -318,11 +318,7 @@ void buildMenu()
 void drawMenuScreen()
 {
   u8g2.setFont(u8g2_font_helvR10_tr);
-
-  // On descend le texte à 12 (au lieu de 10) pour lui donner de l'air en haut
   drawStringCenter(12, "MENU");
-
-  // On descend la ligne à 14 (au lieu de 12) pour qu'elle ne coupe pas le texte
   u8g2.drawLine(0, 14, 128, 14);
 
   u8g2.setFont(u8g2_font_helvR08_tr);
@@ -339,8 +335,6 @@ void drawMenuScreen()
     if (itemIdx >= menuSize)
       break;
 
-    // On garde Y=24 pour le premier item, son cadre de sélection
-    // commencera à Y=15, ce qui laisse juste 1 pixel sous la ligne de séparation !
     int yPos = 24 + (i * 11);
 
     if (itemIdx == menuCursor)
@@ -484,8 +478,62 @@ void fetchOBDData()
     if (millis() - lastDTCRequest > 5000)
     {
       myELM327.currentDTCCodes(false);
+
       if (myELM327.nb_rx_state == ELM_SUCCESS)
+      {
+        int count = myELM327.DTC_Response.codesFound;
+        dtcCountFound = 0;
+
+        if (count > 0)
+        {
+          while (SerialBT.available())
+            SerialBT.read();
+
+          SerialBT.print("03\r");
+
+          unsigned long t = millis();
+          String response = "";
+
+          while (millis() - t < 800) // Timeout de 800ms pour les longues trames
+          {
+            if (SerialBT.available())
+            {
+              char c = SerialBT.read();
+              if (c == '>')
+                break;
+              response += c;
+            }
+          }
+
+          response.replace("\r", "");
+          response.replace("\n", "");
+          response.replace(" ", "");
+
+          int idx = response.indexOf("43");
+          if (idx >= 0)
+          {
+            String hexData = response.substring(idx + 2);
+
+            for (int i = 0; i < hexData.length() - 3; i += 4)
+            {
+              String codeHex = hexData.substring(i, i + 4);
+              if (codeHex == "0000")
+                continue;
+
+              char firstChar = codeHex.charAt(0);
+              int val = (firstChar >= 'A') ? (firstChar - 'A' + 10) : (firstChar - '0');
+              char prefix = "PCBU"[val >> 2];
+              char digit1 = '0' + (val & 3);
+
+              if (dtcCountFound < 15) // On protège le tableau
+              {
+                dtcCodes[dtcCountFound++] = String(prefix) + String(digit1) + codeHex.substring(1);
+              }
+            }
+          }
+        }
         lastDTCRequest = millis();
+      }
     }
   }
   break;
@@ -586,13 +634,43 @@ void draw_GaugeScreen(uint8_t index)
       draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
     break;
   case 6:
-    u8g2.setFont(u8g2_font_helvR12_tr);
-    drawStringCenter(16, "DTC Codes:");
-    u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(40, String(myELM327.DTC_Response.codesFound));
+  {
+    int total = myELM327.DTC_Response.codesFound;
+
+    u8g2.setFont(u8g2_font_helvR10_tr);
+    drawStringCenter(12, "Défauts: " + String(total));
+
+    if (total == 0)
+    {
+      u8g2.setFont(u8g2_font_helvR12_tr);
+      drawStringCenter(36, "Aucun défaut");
+    }
+    else
+    {
+      u8g2.setFont(u8g2_font_helvR10_tr);
+
+      // On affiche un maximum de 3 lignes pour éviter de dépasser sur la bottombar
+      for (int i = 0; i < dtcCountFound; i++)
+      {
+        if (i < 2)
+        {
+          drawStringCenter(24 + (i * 10), dtcCodes[i]);
+        }
+        else if (i == 2 && total == 3)
+        {
+          drawStringCenter(24 + (i * 10), dtcCodes[i]);
+        }
+        else if (i == 2 && total > 3)
+        {
+          drawStringCenter(24 + (i * 10), "... (+" + String(total - 2) + ")");
+          break;
+        }
+      }
+    }
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
-    break;
+  }
+  break;
   case 7:
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringLeft(0, 12, "BOOST:");
@@ -641,7 +719,6 @@ void startServer()
             { server.send(200, "text/html", generateWebPage()); });
   server.on("/save", HTTP_POST, []()
             {
-      // ==== NOUVEAU: Map de la valeur 0-100 (depuis le form web) vers 0-255 (matériel) ====
       if (server.hasArg("brightness")) {
           int pct = server.arg("brightness").toInt();
           OLED_BRIGHTNESS = map(pct, 0, 100, 0, 255);
@@ -722,23 +799,20 @@ void setup()
 
   bool connected = false;
   int retries = 0;
-  int maxRetries = 5; // Tu peux changer le nombre maximum d'essais ici
+  int maxRetries = 5;
 
   while (!connected && retries < maxRetries)
   {
-    // Affiche la tentative sur l'écran à partir du 2ème essai
     if (retries > 0)
     {
       displayInfo("Retry " + String(retries) + "/" + String(maxRetries));
-      delay(1000); // Laisse un peu de temps au module BT de la voiture
+      delay(1000);
     }
 
-    // 1. On tente d'abord la connexion via l'adresse MAC
     if (SerialBT.connect(elm_address, sec_mask, role))
     {
       connected = true;
     }
-    // 2. Si ça échoue, on tente la connexion via le nom
     else if (SerialBT.connect("ELMULATOR"))
     {
       connected = true;
@@ -747,7 +821,6 @@ void setup()
     retries++;
   }
 
-  // Si on sort de la boucle et qu'on n'est toujours pas connecté
   if (!connected)
   {
     displayInfo("BT Failed!");
@@ -760,7 +833,7 @@ void setup()
   {
     delay(2000);
     restart_ESP();
-  } // Timeout rapide
+  }
 
   myELM327.sendCommand("AT AT2");
   myELM327.sendCommand("AT S0");
@@ -778,13 +851,11 @@ void loop()
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
-  // 1. REQUETES OBD (Tourne en boucle très vite, sans blocage graphique)
   if (currentState == STATE_GAUGES)
   {
     fetchOBDData();
   }
 
-  // 2. LECTURE DU BOUTON
   static int buttonState = HIGH;
   static int lastButtonState = HIGH;
   static unsigned long lastDebounceTime = 0;
@@ -809,7 +880,6 @@ void loop()
       {
         if (!longPressTriggered)
         {
-          // --- APPUI COURT ---
           if (currentState == STATE_GAUGES)
           {
             screenIndex = (screenIndex + 1) % screenNumbers;
@@ -837,11 +907,10 @@ void loop()
           }
           else if (currentState == STATE_EDIT_BRIGHTNESS)
           {
-            // NOUVEAU : Incrémente par paliers (environ +20% à chaque clic)
             OLED_BRIGHTNESS += 51;
             if (OLED_BRIGHTNESS > 255)
               OLED_BRIGHTNESS = 0;
-            setOledBrightness(OLED_BRIGHTNESS); // Application instantanée
+            setOledBrightness(OLED_BRIGHTNESS);
           }
         }
       }
@@ -851,7 +920,6 @@ void loop()
       if ((millis() - pressStartTime) > 800)
       {
         longPressTriggered = true;
-        // --- APPUI LONG ---
         if (currentState == STATE_GAUGES)
         {
           buildMenu();
@@ -910,9 +978,8 @@ void loop()
   }
   lastButtonState = reading;
 
-  // 3. RAFRAÎCHISSEMENT DE L'ÉCRAN
   static unsigned long lastDrawTime = 0;
-  if (millis() - lastDrawTime > 32) // Environ 30 FPS
+  if (millis() - lastDrawTime > 32)
   {
     lastDrawTime = millis();
     u8g2.clearBuffer();
