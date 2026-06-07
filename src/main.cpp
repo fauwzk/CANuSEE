@@ -54,9 +54,13 @@ enum AppState
   STATE_EDIT_MIN,
   STATE_EDIT_MAX,
   STATE_EDIT_SPEED,
-  STATE_EDIT_BRIGHTNESS
+  STATE_EDIT_BRIGHTNESS,
+  STATE_CONFIG // Mode configuration (WiFi actif, Bluetooth désactivé)
 };
 AppState currentState = STATE_GAUGES;
+
+// ==== OTA State ====
+bool ota_updating = false;
 
 // ==== Dashboard refresh state ====
 uint8_t dashStep = 0;
@@ -99,7 +103,7 @@ float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
 // ==== Dynamic Menu Variables ====
-#define MAX_MENU_ITEMS 16
+#define MAX_MENU_ITEMS 24 // Augmenté pour encaisser toutes les options
 String menuText[MAX_MENU_ITEMS];
 int menuAction[MAX_MENU_ITEMS];
 int menuSize = 0;
@@ -112,6 +116,7 @@ int menuCursor = 0;
 #define ACT_RESET_DTC 4
 #define ACT_EDIT_SPEED 5
 #define ACT_EDIT_BRIGHTNESS 6
+#define ACT_ENTER_CONFIG 7 // Nouvelle action
 #define ACT_GO_SCREEN_0 10
 
 const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
@@ -200,7 +205,7 @@ void loadValues()
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
   ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type < 2) ? cfg.engload_screen_type : 0;
-  BATTERY_SCREEN = (cfg.battery_screen_type >= 0 && cfg.battery_screen_type < 2) ? cfg.battery_screen_type : 0;
+  BATTERY_SCREEN = (cfg.battery_screen_type >= 0 && cfg.battery_screen_type < 2) ? BATTERY_SCREEN = cfg.battery_screen_type : 0;
   COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type < 2) ? cfg.coolant_screen_type : 0;
   IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < 2) ? cfg.intake_temp_screen_type : 0;
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
@@ -268,6 +273,9 @@ void buildMenu()
   menuSize = 0;
   menuText[menuSize] = "Exit Menu";
   menuAction[menuSize++] = ACT_CLOSE;
+
+  menuText[menuSize] = "Mode Config";
+  menuAction[menuSize++] = ACT_ENTER_CONFIG;
 
   menuText[menuSize] = "Brightness";
   menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
@@ -359,6 +367,19 @@ void drawEditScreen(String title, String valueStr, String instruction)
   u8g2.setFont(u8g2_font_helvR18_tr);
   drawStringCenter(38, valueStr);
   draw_BottomText(instruction);
+}
+
+void drawConfigScreen()
+{
+  u8g2.setFont(u8g2_font_helvB10_tr);
+  drawStringCenter(14, "MODE CONFIG");
+  u8g2.drawLine(0, 18, 128, 18);
+
+  u8g2.setFont(u8g2_font_helvR08_tr);
+  drawStringCenter(30, "WiFi: " + String(ssid));
+  drawStringCenter(42, "IP: 192.168.4.1");
+
+  draw_BottomText("Appui court pour Quitter");
 }
 
 // ==== History Buffers & Gauge Drawing ====
@@ -758,6 +779,17 @@ void startServer()
         server.send(200, "application/json", json); });
 
   ElegantOTA.begin(&server);
+
+  // CALLBACK DE PROTECTION OTA
+  ElegantOTA.onStart([]()
+                     {
+    ota_updating = true; // Bloque la boucle loop()
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_helvR12_tr);
+    drawStringCenter(35, "OTA UPDATING");
+    draw_BottomText("Ne pas debrancher");
+    u8g2.sendBuffer(); });
+
   server.begin();
 }
 
@@ -766,7 +798,13 @@ void setup()
 {
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  delay(500);
+  delay(500); // Laisse le temps de maintenir le bouton si besoin
+
+  // Vérification de l'appui bouton pour forcer le mode Config au démarrage
+  if (digitalRead(BUTTON_PIN) == LOW)
+  {
+    currentState = STATE_CONFIG;
+  }
 
   u8g2.begin();
   u8g2.setBusClock(400000);
@@ -787,59 +825,64 @@ void setup()
     delay(2000);
     restart_ESP();
   }
-  displayInfo("BT Init...");
-  if (!SerialBT.begin("CANuSEE", true))
+
+  // Si on N'EST PAS en mode config, on allume le Bluetooth
+  if (currentState != STATE_CONFIG)
   {
-    delay(2000);
-    restart_ESP();
-  }
-  SerialBT.setPin(ELM327_BT_PIN);
-
-  displayInfo("Connecting...");
-
-  bool connected = false;
-  int retries = 0;
-  int maxRetries = 5;
-
-  while (!connected && retries < maxRetries)
-  {
-    if (retries > 0)
+    displayInfo("BT Init...");
+    if (!SerialBT.begin("CANuSEE", true))
     {
-      displayInfo("Retry " + String(retries) + "/" + String(maxRetries));
-      delay(1000);
+      delay(2000);
+      restart_ESP();
+    }
+    SerialBT.setPin(ELM327_BT_PIN);
+
+    displayInfo("Connecting...");
+
+    bool connected = false;
+    int retries = 0;
+    int maxRetries = 5;
+
+    while (!connected && retries < maxRetries)
+    {
+      if (retries > 0)
+      {
+        displayInfo("Retry " + String(retries) + "/" + String(maxRetries));
+        delay(1000);
+      }
+
+      if (SerialBT.connect(elm_address, sec_mask, role))
+      {
+        connected = true;
+      }
+      else if (SerialBT.connect("ELMULATOR"))
+      {
+        connected = true;
+      }
+
+      retries++;
     }
 
-    if (SerialBT.connect(elm_address, sec_mask, role))
+    if (!connected)
     {
-      connected = true;
-    }
-    else if (SerialBT.connect("ELMULATOR"))
-    {
-      connected = true;
+      displayInfo("BT Failed!");
+      delay(2000);
+      restart_ESP();
     }
 
-    retries++;
-  }
+    displayInfo("ELM327 Init...");
+    if (!myELM327.begin(SerialBT, false, 500))
+    {
+      delay(2000);
+      restart_ESP();
+    }
 
-  if (!connected)
-  {
-    displayInfo("BT Failed!");
-    delay(2000);
-    restart_ESP();
+    myELM327.sendCommand("AT AT2");
+    myELM327.sendCommand("AT S0");
+    myELM327.sendCommand("AT H0");
+    myELM327.sendCommand(SET_ISO_BAUD_10400);
+    myELM327.sendCommand(ALLOW_LONG_MESSAGES);
   }
-
-  displayInfo("ELM327 Init...");
-  if (!myELM327.begin(SerialBT, false, 500))
-  {
-    delay(2000);
-    restart_ESP();
-  }
-
-  myELM327.sendCommand("AT AT2");
-  myELM327.sendCommand("AT S0");
-  myELM327.sendCommand("AT H0");
-  myELM327.sendCommand(SET_ISO_BAUD_10400);
-  myELM327.sendCommand(ALLOW_LONG_MESSAGES);
 
   startServer();
 }
@@ -850,6 +893,13 @@ void loop()
   server.handleClient();
   ElegantOTA.loop();
   dnsServer.processNextRequest();
+
+  // BLOQUE LE RESTE DU CODE PENDANT LA MISE A JOUR
+  if (ota_updating)
+  {
+    yield();
+    return;
+  }
 
   if (currentState == STATE_GAUGES)
   {
@@ -880,7 +930,12 @@ void loop()
       {
         if (!longPressTriggered)
         {
-          if (currentState == STATE_GAUGES)
+          // --- APPUI COURT ---
+          if (currentState == STATE_CONFIG)
+          {
+            restart_ESP(); // Quitter le mode config
+          }
+          else if (currentState == STATE_GAUGES)
           {
             screenIndex = (screenIndex + 1) % screenNumbers;
             saveValues();
@@ -920,6 +975,7 @@ void loop()
       if ((millis() - pressStartTime) > 800)
       {
         longPressTriggered = true;
+        // --- APPUI LONG ---
         if (currentState == STATE_GAUGES)
         {
           buildMenu();
@@ -930,6 +986,8 @@ void loop()
           int action = menuAction[menuCursor];
           if (action == ACT_CLOSE)
             currentState = STATE_GAUGES;
+          else if (action == ACT_ENTER_CONFIG)
+            currentState = STATE_CONFIG; // On passe en mode config
           else if (action == ACT_TOGGLE_STYLE)
           {
             if (screenIndex == 1)
@@ -986,6 +1044,8 @@ void loop()
 
     if (currentState == STATE_GAUGES)
       draw_GaugeScreen(screenIndex);
+    else if (currentState == STATE_CONFIG)
+      drawConfigScreen();
     else if (currentState == STATE_MENU)
       drawMenuScreen();
     else if (currentState == STATE_EDIT_MIN)
