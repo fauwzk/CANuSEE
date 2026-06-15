@@ -1,7 +1,5 @@
 #include <Wire.h>
 #include <EEPROM.h>
-#include "BluetoothSerial.h"
-#include "ELMduino.h"
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -11,6 +9,18 @@
 #include "epd_bitmap_logo_3008.h"
 #include <ElegantOTA.h>
 #include "version.h"
+
+// ==== Driver CAN (TWAI) natif ESP32 ====
+#include "driver/twai.h"
+
+// ==== Pins Configuration (ESP32-C3 Super Mini) ====
+#define BTN_UP 0
+#define BTN_DOWN 1
+#define BTN_OK 6 // Pin 6 est sécurisé au démarrage (évite le bootloop)
+#define BTN_MENU 3
+
+#define CAN_RX_PIN 4
+#define CAN_TX_PIN 5
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -55,7 +65,7 @@ enum AppState
   STATE_EDIT_MAX,
   STATE_EDIT_SPEED,
   STATE_EDIT_BRIGHTNESS,
-  STATE_CONFIG // Mode configuration (WiFi actif, Bluetooth désactivé)
+  STATE_CONFIG // Mode configuration
 };
 AppState currentState = STATE_GAUGES;
 
@@ -68,14 +78,8 @@ float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashLoad = 0;
 
 String version_string = "CANuSEE " FW_VERSION;
 
-// ==== OLED (U8g2) ====
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE, 22, 21);
-
-// ==== ELM327 Classic Bluetooth ====
-BluetoothSerial SerialBT;
-#define ELM327_BT_PIN "1234"
-ELM327 myELM327;
-uint8_t elm_address[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xBA};
+// ==== OLED (U8g2) - Pins 21 (SCL) et 20 (SDA) ====
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 
 // ==== Coordinates & State ====
 const int centerX = 64;
@@ -84,15 +88,12 @@ uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
 
-#define BUTTON_PIN 32
-esp_spp_sec_t sec_mask = ESP_SPP_SEC_NONE;
-esp_spp_role_t role = ESP_SPP_ROLE_MASTER;
-
+// ==== Variables Capteurs ====
 float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0;
 float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 
 // ==== Variables DTC ====
-String dtcCodes[15]; // Capacité augmentée à 15 codes
+String dtcCodes[15];
 int dtcCountFound = 0;
 
 // ==== Timer State ====
@@ -103,7 +104,7 @@ float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
 // ==== Dynamic Menu Variables ====
-#define MAX_MENU_ITEMS 24 // Augmenté pour encaisser toutes les options
+#define MAX_MENU_ITEMS 24
 String menuText[MAX_MENU_ITEMS];
 int menuAction[MAX_MENU_ITEMS];
 int menuSize = 0;
@@ -116,17 +117,53 @@ int menuCursor = 0;
 #define ACT_RESET_DTC 4
 #define ACT_EDIT_SPEED 5
 #define ACT_EDIT_BRIGHTNESS 6
-#define ACT_ENTER_CONFIG 7 // Nouvelle action
+#define ACT_ENTER_CONFIG 7
 #define ACT_GO_SCREEN_0 10
 
 const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
 
-void setOledBrightness(uint8_t b)
+// ==== Boutons Struct ====
+struct Button
 {
-  u8g2.setContrast(b);
-}
+  uint8_t pin;
+  bool state;
+  bool lastState;
+  unsigned long lastDebounceTime;
 
-// ==== Text Alignment Helpers ====
+  bool pressed()
+  {
+    bool reading = (digitalRead(pin) == LOW);
+    if (reading != lastState)
+      lastDebounceTime = millis();
+    lastState = reading;
+
+    if ((millis() - lastDebounceTime) > 50)
+    {
+      if (reading != state)
+      {
+        state = reading;
+        return state;
+      }
+    }
+    return false;
+  }
+};
+
+Button btnUp = {BTN_UP, false, false, 0};
+Button btnDown = {BTN_DOWN, false, false, 0};
+Button btnOk = {BTN_OK, false, false, 0};
+Button btnMenu = {BTN_MENU, false, false, 0};
+
+// ==== CAN Polling Variables ====
+const uint8_t OBD_PIDS[] = {0x01, 0x04, 0x05, 0x0B, 0x0D, 0x0F, 0x42}; // Ajout 0x01 pour les DTC
+const uint8_t NUM_PIDS = sizeof(OBD_PIDS) / sizeof(OBD_PIDS[0]);
+uint8_t currentPidIndex = 0;
+unsigned long lastCanRequest = 0;
+
+// ------------------------------------------------------------------------------------------------
+
+void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
+
 void drawStringCenter(int y, String text)
 {
   int w = u8g2.getStrWidth(text.c_str());
@@ -152,12 +189,9 @@ String generateWebPage()
   if (!file)
     return "<html><body><h3>File not found</h3></body></html>";
   String html = file.readString();
-
   file.close();
 
-  // Optimisation de la mémoire pour éviter la fragmentation
   html.reserve(html.length() + 1024);
-
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version_string);
@@ -205,7 +239,7 @@ void loadValues()
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
   ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type < 2) ? cfg.engload_screen_type : 0;
-  BATTERY_SCREEN = (cfg.battery_screen_type >= 0 && cfg.battery_screen_type < 2) ? BATTERY_SCREEN = cfg.battery_screen_type : 0;
+  BATTERY_SCREEN = (cfg.battery_screen_type >= 0 && cfg.battery_screen_type < 2) ? cfg.battery_screen_type : 0;
   COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type < 2) ? cfg.coolant_screen_type : 0;
   IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < 2) ? cfg.intake_temp_screen_type : 0;
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
@@ -344,7 +378,6 @@ void drawMenuScreen()
       break;
 
     int yPos = 24 + (i * 11);
-
     if (itemIdx == menuCursor)
     {
       u8g2.setDrawColor(1);
@@ -357,7 +390,7 @@ void drawMenuScreen()
     drawStringCenter(yPos, menuText[itemIdx]);
     u8g2.setDrawColor(1);
   }
-  draw_BottomText("Short: Scroll | Long: OK");
+  draw_BottomText("U/D:Sel OK:Do M:Exit");
 }
 
 void drawEditScreen(String title, String valueStr, String instruction)
@@ -374,12 +407,10 @@ void drawConfigScreen()
   u8g2.setFont(u8g2_font_helvB10_tr);
   drawStringCenter(14, "MODE CONFIG");
   u8g2.drawLine(0, 18, 128, 18);
-
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(30, "WiFi: " + String(ssid));
   drawStringCenter(42, "IP: 192.168.4.1");
-
-  draw_BottomText("Appui court pour Quitter");
+  draw_BottomText("Appui Menu pour Quitter");
 }
 
 // ==== History Buffers & Gauge Drawing ====
@@ -456,164 +487,106 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
-// ==== Non-blocking OBD Fetch ====
+// ==== CAN OBD2 Functions ====
+void requestOBDPID(uint8_t pid)
+{
+  twai_message_t message;
+  message.identifier = 0x7DF;
+  message.extd = 0;
+  message.data_length_code = 8;
+  message.data[0] = 0x02; // Taille données
+  message.data[1] = 0x01; // Service 01
+  message.data[2] = pid;  // PID demandé
+  for (int i = 3; i < 8; i++)
+    message.data[i] = 0xAA; // Padding
+
+  twai_transmit(&message, pdMS_TO_TICKS(10));
+}
+
+void clearDTC()
+{
+  twai_message_t message;
+  message.identifier = 0x7DF;
+  message.extd = 0;
+  message.data_length_code = 8;
+  message.data[0] = 0x01;
+  message.data[1] = 0x04; // Service 04 : Clear DTC
+  for (int i = 2; i < 8; i++)
+    message.data[i] = 0xAA;
+
+  twai_transmit(&message, pdMS_TO_TICKS(10));
+}
+
 void fetchOBDData()
 {
-  float tempVal;
-
-  switch (screenIndex)
+  if (millis() - lastCanRequest > 50)
   {
-  case 0:
-    tempVal = myELM327.manifoldPressure();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      mafPressure = tempVal;
-    break;
-  case 1:
-    tempVal = myELM327.manifoldPressure();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      turboPressureState = (tempVal - 100) * 0.01;
-    break;
-  case 2:
-    tempVal = myELM327.intakeAirTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      intakeTemp = tempVal;
-    break;
-  case 3:
-    tempVal = myELM327.engineLoad();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      engineLoad = tempVal;
-    break;
-  case 4:
-    tempVal = myELM327.batteryVoltage();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      batteryVoltage = tempVal - 2.0;
-    break;
-  case 5:
-    tempVal = myELM327.engineCoolantTemp();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-      coolantTemp = tempVal;
-    break;
-  case 6: // DTC
-  {
-    static unsigned long lastDTCRequest = 0;
-    if (millis() - lastDTCRequest > 5000)
-    {
-      myELM327.currentDTCCodes(false);
-
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-      {
-        int count = myELM327.DTC_Response.codesFound;
-        dtcCountFound = 0;
-
-        if (count > 0)
-        {
-          while (SerialBT.available())
-            SerialBT.read();
-
-          SerialBT.print("03\r");
-
-          unsigned long t = millis();
-          String response = "";
-
-          while (millis() - t < 800) // Timeout de 800ms pour les longues trames
-          {
-            if (SerialBT.available())
-            {
-              char c = SerialBT.read();
-              if (c == '>')
-                break;
-              response += c;
-            }
-          }
-
-          response.replace("\r", "");
-          response.replace("\n", "");
-          response.replace(" ", "");
-
-          int idx = response.indexOf("43");
-          if (idx >= 0)
-          {
-            String hexData = response.substring(idx + 2);
-
-            for (int i = 0; i < hexData.length() - 3; i += 4)
-            {
-              String codeHex = hexData.substring(i, i + 4);
-              if (codeHex == "0000")
-                continue;
-
-              char firstChar = codeHex.charAt(0);
-              int val = (firstChar >= 'A') ? (firstChar - 'A' + 10) : (firstChar - '0');
-              char prefix = "PCBU"[val >> 2];
-              char digit1 = '0' + (val & 3);
-
-              if (dtcCountFound < 15) // On protège le tableau
-              {
-                dtcCodes[dtcCountFound++] = String(prefix) + String(digit1) + codeHex.substring(1);
-              }
-            }
-          }
-        }
-        lastDTCRequest = millis();
-      }
-    }
+    requestOBDPID(OBD_PIDS[currentPidIndex]);
+    currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
+    lastCanRequest = millis();
   }
-  break;
-  case 7: // Dash
-    switch (dashStep)
+
+  twai_message_t message;
+  while (twai_receive(&message, 0) == ESP_OK)
+  {
+    if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
-    case 0:
-      tempVal = myELM327.manifoldPressure();
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-        dashBoost = (tempVal - 100) * 0.01;
-      dashStep++;
-      break;
-    case 1:
-      tempVal = myELM327.intakeAirTemp();
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-        dashIAT = tempVal;
-      dashStep++;
-      break;
-    case 2:
-      tempVal = myELM327.engineCoolantTemp();
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-        dashCoolant = tempVal;
-      dashStep++;
-      break;
-    case 3:
-      tempVal = myELM327.engineLoad();
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-        dashLoad = tempVal;
-      dashStep = 0;
-      break;
-    }
-    break;
-  case 8: // Timer
-  case 9: // Speed
-    tempVal = myELM327.kph();
-    if (myELM327.nb_rx_state == ELM_SUCCESS)
-    {
-      currentSpeed = tempVal;
-      if (screenIndex == 8)
-      {
-        if (currentSpeed <= 0)
+      if (message.data[1] == 0x41)
+      { // Réponse au service 01
+        uint8_t pid = message.data[2];
+        float A = message.data[3];
+        float B = message.data[4];
+
+        switch (pid)
         {
-          timerReady = true;
-          timerRunning = false;
-        }
-        else if (timerReady && !timerRunning && currentSpeed > 0)
-        {
-          timerRunning = true;
-          speedTimerStart = millis();
-        }
-        else if (timerRunning && currentSpeed >= TARGET_SPEED)
-        {
-          timerRunning = false;
-          timerReady = false;
-          lastTimerValue = (millis() - speedTimerStart) / 1000.0;
+        case 0x01: // DTC Count (Monitor status)
+          dtcCountFound = message.data[3] & 0x7F;
+          break;
+        case 0x04: // Engine Load
+          engineLoad = (A * 100.0) / 255.0;
+          dashLoad = engineLoad;
+          break;
+        case 0x05: // Coolant
+          coolantTemp = A - 40;
+          dashCoolant = coolantTemp;
+          break;
+        case 0x0B: // MAP (Boost)
+          mafPressure = A;
+          turboPressureState = (A - 100) * 0.01;
+          dashBoost = turboPressureState;
+          break;
+        case 0x0D: // Speed
+          currentSpeed = A;
+          if (screenIndex == 8)
+          {
+            if (currentSpeed <= 0)
+            {
+              timerReady = true;
+              timerRunning = false;
+            }
+            else if (timerReady && !timerRunning && currentSpeed > 0)
+            {
+              timerRunning = true;
+              speedTimerStart = millis();
+            }
+            else if (timerRunning && currentSpeed >= TARGET_SPEED)
+            {
+              timerRunning = false;
+              timerReady = false;
+              lastTimerValue = (millis() - speedTimerStart) / 1000.0;
+            }
+          }
+          break;
+        case 0x0F: // IAT
+          intakeTemp = A - 40;
+          dashIAT = intakeTemp;
+          break;
+        case 0x42: // Module Voltage
+          batteryVoltage = ((A * 256) + B) / 1000.0;
+          break;
         }
       }
     }
-    break;
   }
 }
 
@@ -656,37 +629,19 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 6:
   {
-    int total = myELM327.DTC_Response.codesFound;
-
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(12, "Défauts: " + String(total));
+    drawStringCenter(12, "Defauts: " + String(dtcCountFound));
 
-    if (total == 0)
+    if (dtcCountFound == 0)
     {
       u8g2.setFont(u8g2_font_helvR12_tr);
-      drawStringCenter(36, "Aucun défaut");
+      drawStringCenter(36, "Aucun defaut");
     }
     else
     {
       u8g2.setFont(u8g2_font_helvR10_tr);
-
-      // On affiche un maximum de 3 lignes pour éviter de dépasser sur la bottombar
-      for (int i = 0; i < dtcCountFound; i++)
-      {
-        if (i < 2)
-        {
-          drawStringCenter(24 + (i * 10), dtcCodes[i]);
-        }
-        else if (i == 2 && total == 3)
-        {
-          drawStringCenter(24 + (i * 10), dtcCodes[i]);
-        }
-        else if (i == 2 && total > 3)
-        {
-          drawStringCenter(24 + (i * 10), "... (+" + String(total - 2) + ")");
-          break;
-        }
-      }
+      drawStringCenter(36, "Lecture texte CAN");
+      drawStringCenter(46, "Non dispo (ISO-TP)");
     }
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
@@ -740,11 +695,7 @@ void startServer()
             { server.send(200, "text/html", generateWebPage()); });
   server.on("/save", HTTP_POST, []()
             {
-      if (server.hasArg("brightness")) {
-          int pct = server.arg("brightness").toInt();
-          OLED_BRIGHTNESS = map(pct, 0, 100, 0, 255);
-      }
-      
+      if (server.hasArg("brightness")) OLED_BRIGHTNESS = map(server.arg("brightness").toInt(), 0, 100, 0, 255);
       if (server.hasArg("ticks")) TICK_LINE_GAUGE = server.arg("ticks").toInt();
       if (server.hasArg("max_speed")) TARGET_SPEED = server.arg("max_speed").toInt();
       if (server.hasArg("boost_min")) TURBO_MIN_BAR = server.arg("boost_min").toFloat();
@@ -783,7 +734,7 @@ void startServer()
   // CALLBACK DE PROTECTION OTA
   ElegantOTA.onStart([]()
                      {
-    ota_updating = true; // Bloque la boucle loop()
+    ota_updating = true; 
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(35, "OTA UPDATING");
@@ -797,11 +748,24 @@ void startServer()
 void setup()
 {
   Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  delay(500); // Laisse le temps de maintenir le bouton si besoin
+
+  // Debuggage USB C3
+  int usbTimeout = 40;
+  while (!Serial && usbTimeout > 0)
+  {
+    delay(100);
+    usbTimeout--;
+  }
+
+  pinMode(BTN_UP, INPUT_PULLUP);
+  pinMode(BTN_DOWN, INPUT_PULLUP);
+  pinMode(BTN_OK, INPUT_PULLUP);
+  pinMode(BTN_MENU, INPUT_PULLUP);
+
+  delay(500);
 
   // Vérification de l'appui bouton pour forcer le mode Config au démarrage
-  if (digitalRead(BUTTON_PIN) == LOW)
+  if (digitalRead(BTN_OK) == LOW)
   {
     currentState = STATE_CONFIG;
   }
@@ -826,62 +790,29 @@ void setup()
     restart_ESP();
   }
 
-  // Si on N'EST PAS en mode config, on allume le Bluetooth
+  // Si on N'EST PAS en mode config, on allume le CAN TWAI
   if (currentState != STATE_CONFIG)
   {
-    displayInfo("BT Init...");
-    if (!SerialBT.begin("CANuSEE", true))
+    displayInfo("CAN Init...");
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
     {
+      if (twai_start() != ESP_OK)
+      {
+        displayInfo("CAN Start Fail");
+        delay(2000);
+        restart_ESP();
+      }
+    }
+    else
+    {
+      displayInfo("CAN Install Fail");
       delay(2000);
       restart_ESP();
     }
-    SerialBT.setPin(ELM327_BT_PIN);
-
-    displayInfo("Connecting...");
-
-    bool connected = false;
-    int retries = 0;
-    int maxRetries = 5;
-
-    while (!connected && retries < maxRetries)
-    {
-      if (retries > 0)
-      {
-        displayInfo("Retry " + String(retries) + "/" + String(maxRetries));
-        delay(1000);
-      }
-
-      if (SerialBT.connect(elm_address, sec_mask, role))
-      {
-        connected = true;
-      }
-      else if (SerialBT.connect("ELMULATOR"))
-      {
-        connected = true;
-      }
-
-      retries++;
-    }
-
-    if (!connected)
-    {
-      displayInfo("BT Failed!");
-      delay(2000);
-      restart_ESP();
-    }
-
-    displayInfo("ELM327 Init...");
-    if (!myELM327.begin(SerialBT, false, 500))
-    {
-      delay(2000);
-      restart_ESP();
-    }
-
-    myELM327.sendCommand("AT AT2");
-    myELM327.sendCommand("AT S0");
-    myELM327.sendCommand("AT H0");
-    myELM327.sendCommand(SET_ISO_BAUD_10400);
-    myELM327.sendCommand(ALLOW_LONG_MESSAGES);
   }
 
   startServer();
@@ -901,141 +832,152 @@ void loop()
     return;
   }
 
+  // 1. REQUETES OBD CAN (Non-bloquant)
   if (currentState == STATE_GAUGES)
   {
     fetchOBDData();
   }
 
-  static int buttonState = HIGH;
-  static int lastButtonState = HIGH;
-  static unsigned long lastDebounceTime = 0;
-  static unsigned long pressStartTime = 0;
-  static bool longPressTriggered = false;
+  // 2. LECTURE DES 4 BOUTONS
+  bool upPressed = btnUp.pressed();
+  bool downPressed = btnDown.pressed();
+  bool okPressed = btnOk.pressed();
+  bool menuPressed = btnMenu.pressed();
 
-  int reading = digitalRead(BUTTON_PIN);
-  if (reading != lastButtonState)
-    lastDebounceTime = millis();
-
-  if ((millis() - lastDebounceTime) > 50)
+  // ----- TOUCHE MENU -----
+  if (menuPressed)
   {
-    if (reading != buttonState)
+    if (currentState == STATE_CONFIG)
     {
-      buttonState = reading;
-      if (buttonState == LOW)
-      {
-        pressStartTime = millis();
-        longPressTriggered = false;
-      }
-      else
-      {
-        if (!longPressTriggered)
-        {
-          // --- APPUI COURT ---
-          if (currentState == STATE_CONFIG)
-          {
-            restart_ESP(); // Quitter le mode config
-          }
-          else if (currentState == STATE_GAUGES)
-          {
-            screenIndex = (screenIndex + 1) % screenNumbers;
-            saveValues();
-          }
-          else if (currentState == STATE_MENU)
-            menuCursor = (menuCursor + 1) % menuSize;
-          else if (currentState == STATE_EDIT_MIN)
-          {
-            TURBO_MIN_BAR += 0.1;
-            if (TURBO_MIN_BAR > 0.5)
-              TURBO_MIN_BAR = -1.0;
-          }
-          else if (currentState == STATE_EDIT_MAX)
-          {
-            TURBO_MAX_BAR += 0.1;
-            if (TURBO_MAX_BAR > 3.0)
-              TURBO_MAX_BAR = 0.5;
-          }
-          else if (currentState == STATE_EDIT_SPEED)
-          {
-            TARGET_SPEED += 10;
-            if (TARGET_SPEED > 150)
-              TARGET_SPEED = 40;
-          }
-          else if (currentState == STATE_EDIT_BRIGHTNESS)
-          {
-            OLED_BRIGHTNESS += 51;
-            if (OLED_BRIGHTNESS > 255)
-              OLED_BRIGHTNESS = 0;
-            setOledBrightness(OLED_BRIGHTNESS);
-          }
-        }
-      }
+      restart_ESP(); // Quitter le mode config
     }
-    else if (buttonState == LOW && !longPressTriggered)
+    else if (currentState == STATE_GAUGES)
     {
-      if ((millis() - pressStartTime) > 800)
-      {
-        longPressTriggered = true;
-        // --- APPUI LONG ---
-        if (currentState == STATE_GAUGES)
-        {
-          buildMenu();
-          currentState = STATE_MENU;
-        }
-        else if (currentState == STATE_MENU)
-        {
-          int action = menuAction[menuCursor];
-          if (action == ACT_CLOSE)
-            currentState = STATE_GAUGES;
-          else if (action == ACT_ENTER_CONFIG)
-            currentState = STATE_CONFIG; // On passe en mode config
-          else if (action == ACT_TOGGLE_STYLE)
-          {
-            if (screenIndex == 1)
-              BOOST_SCREEN = !BOOST_SCREEN;
-            if (screenIndex == 2)
-              IAT_SCREEN = !IAT_SCREEN;
-            if (screenIndex == 3)
-              ENGLOAD_SCREEN = !ENGLOAD_SCREEN;
-            if (screenIndex == 4)
-              BATTERY_SCREEN = !BATTERY_SCREEN;
-            if (screenIndex == 5)
-              COOLANT_SCREEN = !COOLANT_SCREEN;
-            saveValues();
-            buildMenu();
-          }
-          else if (action == ACT_EDIT_MIN)
-            currentState = STATE_EDIT_MIN;
-          else if (action == ACT_EDIT_MAX)
-            currentState = STATE_EDIT_MAX;
-          else if (action == ACT_EDIT_SPEED)
-            currentState = STATE_EDIT_SPEED;
-          else if (action == ACT_EDIT_BRIGHTNESS)
-            currentState = STATE_EDIT_BRIGHTNESS;
-          else if (action == ACT_RESET_DTC)
-          {
-            displayInfo("Resetting...");
-            delay(1000);
-            myELM327.resetDTC();
-            currentState = STATE_GAUGES;
-          }
-          else if (action >= ACT_GO_SCREEN_0)
-          {
-            screenIndex = action - ACT_GO_SCREEN_0;
-            saveValues();
-            currentState = STATE_GAUGES;
-          }
-        }
-        else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
-        {
-          saveValues();
-          buildMenu();
-          currentState = STATE_MENU;
-        }
-      }
+      buildMenu();
+      currentState = STATE_MENU;
+    }
+    else if (currentState == STATE_MENU || currentState == STATE_EDIT_MIN ||
+             currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED ||
+             currentState == STATE_EDIT_BRIGHTNESS)
+    {
+      currentState = STATE_GAUGES; // Annule/Quitte
     }
   }
-  lastButtonState = reading;
 
+  // ----- TOUCHES HAUT / BAS -----
+  if (upPressed || downPressed)
+  {
+    int dir = upPressed ? -1 : 1;
+
+    if (currentState == STATE_GAUGES)
+    {
+      if (upPressed)
+        screenIndex = (screenIndex == 0) ? (screenNumbers - 1) : (screenIndex - 1);
+      if (downPressed)
+        screenIndex = (screenIndex + 1) % screenNumbers;
+      saveValues();
+    }
+    else if (currentState == STATE_MENU)
+    {
+      menuCursor += dir;
+      if (menuCursor < 0)
+        menuCursor = menuSize - 1;
+      if (menuCursor >= menuSize)
+        menuCursor = 0;
+    }
+    else if (currentState == STATE_EDIT_MIN)
+    {
+      TURBO_MIN_BAR += (dir * -0.1);
+      if (TURBO_MIN_BAR > 0.5)
+        TURBO_MIN_BAR = 0.5;
+      if (TURBO_MIN_BAR < -1.0)
+        TURBO_MIN_BAR = -1.0;
+    }
+    else if (currentState == STATE_EDIT_MAX)
+    {
+      TURBO_MAX_BAR += (dir * -0.1);
+      if (TURBO_MAX_BAR > 3.0)
+        TURBO_MAX_BAR = 3.0;
+      if (TURBO_MAX_BAR < 0.5)
+        TURBO_MAX_BAR = 0.5;
+    }
+    else if (currentState == STATE_EDIT_SPEED)
+    {
+      TARGET_SPEED += (dir * -10);
+      if (TARGET_SPEED > 200)
+        TARGET_SPEED = 200;
+      if (TARGET_SPEED < 40)
+        TARGET_SPEED = 40;
+    }
+    else if (currentState == STATE_EDIT_BRIGHTNESS)
+    {
+      int newVal = OLED_BRIGHTNESS + (dir * -25);
+      OLED_BRIGHTNESS = constrain(newVal, 0, 255);
+      setOledBrightness(OLED_BRIGHTNESS);
+    }
+  }
+
+  // ----- TOUCHE OK -----
+  if (okPressed)
+  {
+    if (currentState == STATE_MENU)
+    {
+      int action = menuAction[menuCursor];
+      if (action == ACT_CLOSE)
+      {
+        currentState = STATE_GAUGES;
+      }
+      else if (action == ACT_ENTER_CONFIG)
+      {
+        currentState = STATE_CONFIG;
+      }
+      else if (action == ACT_TOGGLE_STYLE)
+      {
+        if (screenIndex == 1)
+          BOOST_SCREEN = !BOOST_SCREEN;
+        if (screenIndex == 2)
+          IAT_SCREEN = !IAT_SCREEN;
+        if (screenIndex == 3)
+          ENGLOAD_SCREEN = !ENGLOAD_SCREEN;
+        if (screenIndex == 4)
+          BATTERY_SCREEN = !BATTERY_SCREEN;
+        if (screenIndex == 5)
+          COOLANT_SCREEN = !COOLANT_SCREEN;
+        saveValues();
+        buildMenu();
+      }
+      else if (action == ACT_EDIT_MIN)
+        currentState = STATE_EDIT_MIN;
+      else if (action == ACT_EDIT_MAX)
+        currentState = STATE_EDIT_MAX;
+      else if (action == ACT_EDIT_SPEED)
+        currentState = STATE_EDIT_SPEED;
+      else if (action == ACT_EDIT_BRIGHTNESS)
+        currentState = STATE_EDIT_BRIGHTNESS;
+      else if (action == ACT_RESET_DTC)
+      {
+        displayInfo("Clearing DTC...");
+        clearDTC();
+        delay(1000);
+        currentState = STATE_GAUGES;
+      }
+      else if (action >= ACT_GO_SCREEN_0)
+      {
+        screenIndex = action - ACT_GO_SCREEN_0;
+        saveValues();
+        currentState = STATE_GAUGES;
+      }
+    }
+    else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX ||
+             currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
+    {
+      saveValues();
+      buildMenu();
+      currentState = STATE_MENU;
+    }
+  }
+
+  // 3. RAFRAÎCHISSEMENT DE L'ÉCRAN
   static unsigned long lastDrawTime = 0;
   if (millis() - lastDrawTime > 32)
   {
@@ -1049,15 +991,15 @@ void loop()
     else if (currentState == STATE_MENU)
       drawMenuScreen();
     else if (currentState == STATE_EDIT_MIN)
-      drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "Short: +0.1 | Long: Save");
+      drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "U/D: Edit | OK: Save");
     else if (currentState == STATE_EDIT_MAX)
-      drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "Short: +0.1 | Long: Save");
+      drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "U/D: Edit | OK: Save");
     else if (currentState == STATE_EDIT_SPEED)
-      drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "Short: +10 | Long: Save");
+      drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "U/D: Edit | OK: Save");
     else if (currentState == STATE_EDIT_BRIGHTNESS)
     {
       int brightPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
-      drawEditScreen("Brightness", String(brightPct) + " %", "Short: + | Long: Save");
+      drawEditScreen("Brightness", String(brightPct) + " %", "U/D: Edit | OK: Save");
     }
 
     u8g2.sendBuffer();
