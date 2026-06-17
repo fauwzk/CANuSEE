@@ -12,15 +12,16 @@
 
 // ==== Driver CAN (TWAI) natif ESP32 ====
 #include "driver/twai.h"
+#include "esp_sleep.h"
 
 // ==== Pins Configuration (ESP32-C3 Super Mini) ====
 #define BTN_UP 0
 #define BTN_DOWN 1
-#define BTN_OK 6 // Pin 6 est sécurisé au démarrage (évite le bootloop)
+#define BTN_OK 6
 #define BTN_MENU 3
 
-#define CAN_RX_PIN 4
-#define CAN_TX_PIN 5
+#define CAN_RX_PIN 9
+#define CAN_TX_PIN 8
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -42,6 +43,7 @@ struct Settings
   int tick_line_gauge;
   int target_speed;
   int brightness;
+  int sleep_timeout_sec; // NOUVEAU: Temps avant la veille en secondes
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -55,6 +57,10 @@ int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
 int OLED_BRIGHTNESS = 255;
+int SLEEP_TIMEOUT_SEC = 60; // Par défaut : 60 secondes
+
+// ==== Timer Gestion de l'alimentation ====
+unsigned long lastActivityTime = 0;
 
 // ==== State Machine ====
 enum AppState
@@ -65,7 +71,7 @@ enum AppState
   STATE_EDIT_MAX,
   STATE_EDIT_SPEED,
   STATE_EDIT_BRIGHTNESS,
-  STATE_CONFIG // Mode configuration
+  STATE_CONFIG
 };
 AppState currentState = STATE_GAUGES;
 
@@ -83,10 +89,15 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 
 // ==== Coordinates & State ====
 const int centerX = 64;
-const int screenNumbers = 10;
+const int screenNumbers = 11; // MODIFIÉ : On passe à 11 écrans
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
+
+// ==== Raw CAN State (NOUVEAU) ====
+uint32_t lastRawId = 0;
+uint8_t lastRawDlc = 0;
+uint8_t lastRawData[8] = {0};
 
 // ==== Variables Capteurs ====
 float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0;
@@ -120,7 +131,8 @@ int menuCursor = 0;
 #define ACT_ENTER_CONFIG 7
 #define ACT_GO_SCREEN_0 10
 
-const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed"};
+// MODIFIÉ : Ajout de "Raw" à la fin de la liste des écrans
+const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "Raw"};
 
 // ==== Boutons Struct ====
 struct Button
@@ -155,7 +167,7 @@ Button btnOk = {BTN_OK, false, false, 0};
 Button btnMenu = {BTN_MENU, false, false, 0};
 
 // ==== CAN Polling Variables ====
-const uint8_t OBD_PIDS[] = {0x01, 0x04, 0x05, 0x0B, 0x0D, 0x0F, 0x42}; // Ajout 0x01 pour les DTC
+const uint8_t OBD_PIDS[] = {0x01, 0x04, 0x05, 0x0B, 0x0D, 0x0F, 0x42};
 const uint8_t NUM_PIDS = sizeof(OBD_PIDS) / sizeof(OBD_PIDS[0]);
 uint8_t currentPidIndex = 0;
 unsigned long lastCanRequest = 0;
@@ -163,6 +175,48 @@ unsigned long lastCanRequest = 0;
 // ------------------------------------------------------------------------------------------------
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
+
+// ==========================================
+// ==== FONCTIONS DE VEILLE (DEEP SLEEP) ====
+// ==========================================
+
+void fadeInScreen()
+{
+  u8g2.setPowerSave(0); // Réveille l'écran
+  for (int i = 0; i <= OLED_BRIGHTNESS; i += 5)
+  {
+    u8g2.setContrast(i);
+    delay(15);
+  }
+  u8g2.setContrast(OLED_BRIGHTNESS);
+}
+
+void goToSleep()
+{
+  Serial.println("Timeout atteint. Mise en veille profonde...");
+
+  // 1. Fade-out de l'écran OLED
+  for (int i = OLED_BRIGHTNESS; i >= 0; i -= 5)
+  {
+    u8g2.setContrast(i);
+    delay(15);
+  }
+  u8g2.setPowerSave(1); // Coupe physiquement le convertisseur interne de l'OLED
+  u8g2.setContrast(0);
+
+  // 2. Extinction du driver CAN pour libérer les broches
+  twai_stop();
+  twai_driver_uninstall();
+
+  // 3. Configuration du réveil
+  // On configure la broche CAN_RX pour réveiller l'ESP32 dès que le signal passe à LOW
+  // (Ce qui arrive instantanément quand un calculateur de la voiture commence à parler sur le CAN)
+  pinMode(CAN_RX_PIN, INPUT_PULLUP);
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << CAN_RX_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+
+  // 4. Bonne nuit !
+  esp_deep_sleep_start();
+}
 
 void drawStringCenter(int y, String text)
 {
@@ -210,6 +264,7 @@ String generateWebPage()
 
   int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
   html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
+  html.replace("%SLEEP_TIMEOUT%", String(SLEEP_TIMEOUT_SEC)); // Ajout HTML possible
   return html;
 }
 
@@ -227,6 +282,7 @@ void saveValues()
   cfg.tick_line_gauge = TICK_LINE_GAUGE;
   cfg.target_speed = TARGET_SPEED;
   cfg.brightness = OLED_BRIGHTNESS;
+  cfg.sleep_timeout_sec = SLEEP_TIMEOUT_SEC;
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
@@ -245,6 +301,7 @@ void loadValues()
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
   OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
+  SLEEP_TIMEOUT_SEC = (cfg.sleep_timeout_sec >= 10 && cfg.sleep_timeout_sec <= 3600) ? cfg.sleep_timeout_sec : 60;
 }
 
 void restart_ESP()
@@ -487,38 +544,30 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
+// ==== CAN OBD2 Functions ====
 void requestOBDPID(uint8_t pid)
 {
-  twai_message_t message;
-  memset(&message, 0, sizeof(message)); // <-- LA LIGNE MAGIQUE ICI
-
+  twai_message_t message = {0}; // Initialisation avec des zéros
   message.identifier = 0x7DF;
-  message.extd = 0; // Trame standard (11 bits)
-  message.rtr = 0;  // Data frame, pas une requête distante
+  message.extd = 0;
   message.data_length_code = 8;
-
-  message.data[0] = 0x02; // Taille données
-  message.data[1] = 0x01; // Service 01
-  message.data[2] = pid;  // PID demandé
+  message.data[0] = 0x02;
+  message.data[1] = 0x01;
+  message.data[2] = pid;
   for (int i = 3; i < 8; i++)
-    message.data[i] = 0xAA; // Padding (0xAA ou 0x55 est standard)
+    message.data[i] = 0xAA;
 
-  // On envoie
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
 
 void clearDTC()
 {
-  twai_message_t message;
-  memset(&message, 0, sizeof(message)); // <-- ET ICI AUSSI
-
+  twai_message_t message = {0}; // Initialisation avec des zéros
   message.identifier = 0x7DF;
   message.extd = 0;
-  message.rtr = 0;
   message.data_length_code = 8;
-
   message.data[0] = 0x01;
-  message.data[1] = 0x04; // Service 04 : Clear DTC
+  message.data[1] = 0x04;
   for (int i = 2; i < 8; i++)
     message.data[i] = 0xAA;
 
@@ -538,25 +587,20 @@ void fetchOBDData()
   twai_message_t message;
   while (twai_receive(&message, 0) == ESP_OK)
   {
-    // --- LIGNES DE DEBUG AJOUTÉES ---
-    // Affiche TOUT ce qui passe sur le bus CAN dans le moniteur série
-    Serial.print("CAN ID recu : 0x");
-    Serial.print(message.identifier, HEX);
-    Serial.print(" | DLC: ");
-    Serial.print(message.data_length_code);
-    Serial.print(" | Data: ");
-    for (int i = 0; i < message.data_length_code; i++)
-    {
-      Serial.print(message.data[i], HEX);
-      Serial.print(" ");
-    }
-    Serial.println();
-    // ---------------------------------
+    // On met à jour le chronomètre d'activité pour empêcher la mise en veille
+    lastActivityTime = millis();
 
-    // Si le message provient de l'ECU moteur (Réponses standards OBD2)
+    // --- Sauvegarde pour l'écran RAW ---
+    lastRawId = message.identifier;
+    lastRawDlc = message.data_length_code;
+    for (int i = 0; i < 8; i++)
+    {
+      lastRawData[i] = (i < lastRawDlc) ? message.data[i] : 0;
+    }
+
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
-      if (message.data[1] == 0x41) // Réponse au service 01
+      if (message.data[1] == 0x41)
       {
         uint8_t pid = message.data[2];
         float A = message.data[3];
@@ -564,23 +608,23 @@ void fetchOBDData()
 
         switch (pid)
         {
-        case 0x01: // DTC Count (Monitor status)
+        case 0x01:
           dtcCountFound = message.data[3] & 0x7F;
           break;
-        case 0x04: // Engine Load
+        case 0x04:
           engineLoad = (A * 100.0) / 255.0;
           dashLoad = engineLoad;
           break;
-        case 0x05: // Coolant
+        case 0x05:
           coolantTemp = A - 40;
           dashCoolant = coolantTemp;
           break;
-        case 0x0B: // MAP (Boost)
+        case 0x0B:
           mafPressure = A;
           turboPressureState = (A - 100) * 0.01;
           dashBoost = turboPressureState;
           break;
-        case 0x0D: // Speed
+        case 0x0D:
           currentSpeed = A;
           if (screenIndex == 8)
           {
@@ -602,11 +646,11 @@ void fetchOBDData()
             }
           }
           break;
-        case 0x0F: // IAT
+        case 0x0F:
           intakeTemp = A - 40;
           dashIAT = intakeTemp;
           break;
-        case 0x42: // Module Voltage
+        case 0x42:
           batteryVoltage = ((A * 256) + B) / 1000.0;
           break;
         }
@@ -656,7 +700,6 @@ void draw_GaugeScreen(uint8_t index)
   {
     u8g2.setFont(u8g2_font_helvR10_tr);
     drawStringCenter(12, "Defauts: " + String(dtcCountFound));
-
     if (dtcCountFound == 0)
     {
       u8g2.setFont(u8g2_font_helvR12_tr);
@@ -701,6 +744,51 @@ void draw_GaugeScreen(uint8_t index)
   case 9:
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
+  case 10: // NOUVEL ÉCRAN : RAW DATA
+  {
+    u8g2.setFont(u8g2_font_helvR10_tr);
+    drawStringCenter(12, "RAW CAN DATA");
+
+    if (lastRawId == 0)
+    {
+      u8g2.setFont(u8g2_font_helvR08_tr);
+      drawStringCenter(36, "En attente...");
+    }
+    else
+    {
+      u8g2.setFont(u8g2_font_helvR08_tr);
+      String idStr = "ID: 0x" + String(lastRawId, HEX);
+      idStr.toUpperCase();
+      drawStringLeft(0, 26, idStr + "   DLC: " + String(lastRawDlc));
+
+      String d1 = "", d2 = "";
+      for (int i = 0; i < 4; i++)
+      {
+        if (i < lastRawDlc)
+        {
+          if (lastRawData[i] < 0x10)
+            d1 += "0";
+          d1 += String(lastRawData[i], HEX) + " ";
+        }
+      }
+      for (int i = 4; i < 8; i++)
+      {
+        if (i < lastRawDlc)
+        {
+          if (lastRawData[i] < 0x10)
+            d2 += "0";
+          d2 += String(lastRawData[i], HEX) + " ";
+        }
+      }
+      d1.toUpperCase();
+      d2.toUpperCase();
+      drawStringCenter(38, d1);
+      drawStringCenter(48, d2);
+    }
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
+  }
+  break;
   }
 }
 
@@ -730,6 +818,7 @@ void startServer()
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+      if (server.hasArg("sleep_timeout")) SLEEP_TIMEOUT_SEC = server.arg("sleep_timeout").toInt();
 
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
       setOledBrightness(OLED_BRIGHTNESS);
@@ -756,10 +845,10 @@ void startServer()
 
   ElegantOTA.begin(&server);
 
-  // CALLBACK DE PROTECTION OTA
   ElegantOTA.onStart([]()
                      {
     ota_updating = true; 
+    lastActivityTime = millis(); // Empêche la mise en veille pendant l'OTA
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(35, "OTA UPDATING");
@@ -774,7 +863,6 @@ void setup()
 {
   Serial.begin(115200);
 
-  // Debuggage USB C3
   int usbTimeout = 40;
   while (!Serial && usbTimeout > 0)
   {
@@ -789,7 +877,6 @@ void setup()
 
   delay(500);
 
-  // Vérification de l'appui bouton pour forcer le mode Config au démarrage
   if (digitalRead(BTN_OK) == LOW)
   {
     currentState = STATE_CONFIG;
@@ -800,12 +887,30 @@ void setup()
 
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
-  setOledBrightness(OLED_BRIGHTNESS);
+
+  // Vérifie si on vient de se réveiller d'une veille profonde
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  bool wokeUpFromSleep = (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO);
+
+  if (wokeUpFromSleep)
+  {
+    Serial.println("Reveil declenché par le bus CAN !");
+    u8g2.setContrast(0); // L'écran reste éteint au tout début pour le Fade-in
+  }
+  else
+  {
+    setOledBrightness(OLED_BRIGHTNESS);
+  }
 
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText(version_string);
   u8g2.sendBuffer();
+
+  if (wokeUpFromSleep)
+  {
+    fadeInScreen();
+  }
   delay(1500);
 
   if (!LittleFS.begin())
@@ -815,7 +920,6 @@ void setup()
     restart_ESP();
   }
 
-  // Si on N'EST PAS en mode config, on allume le CAN TWAI
   if (currentState != STATE_CONFIG)
   {
     displayInfo("CAN Init...");
@@ -841,6 +945,9 @@ void setup()
   }
 
   startServer();
+
+  // Initialisation du compteur d'inactivité
+  lastActivityTime = millis();
 }
 
 // ==== Main Loop ====
@@ -850,14 +957,22 @@ void loop()
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
-  // BLOQUE LE RESTE DU CODE PENDANT LA MISE A JOUR
+  // VERIFICATION DU TIMEOUT DE VEILLE (Seulement hors mode OTA et Config)
+  if (!ota_updating && currentState != STATE_CONFIG)
+  {
+    if (millis() - lastActivityTime > (SLEEP_TIMEOUT_SEC * 1000UL))
+    {
+      goToSleep();
+    }
+  }
+
   if (ota_updating)
   {
+    lastActivityTime = millis();
     yield();
     return;
   }
 
-  // 1. REQUETES OBD CAN (Non-bloquant)
   if (currentState == STATE_GAUGES)
   {
     fetchOBDData();
@@ -869,13 +984,16 @@ void loop()
   bool okPressed = btnOk.pressed();
   bool menuPressed = btnMenu.pressed();
 
-  // ----- TOUCHE MENU -----
+  // Si on touche à un bouton, on réinitialise le compteur de veille
+  if (upPressed || downPressed || okPressed || menuPressed)
+  {
+    lastActivityTime = millis();
+  }
+
   if (menuPressed)
   {
     if (currentState == STATE_CONFIG)
-    {
-      restart_ESP(); // Quitter le mode config
-    }
+      restart_ESP();
     else if (currentState == STATE_GAUGES)
     {
       buildMenu();
@@ -885,11 +1003,10 @@ void loop()
              currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED ||
              currentState == STATE_EDIT_BRIGHTNESS)
     {
-      currentState = STATE_GAUGES; // Annule/Quitte
+      currentState = STATE_GAUGES;
     }
   }
 
-  // ----- TOUCHES HAUT / BAS -----
   if (upPressed || downPressed)
   {
     int dir = upPressed ? -1 : 1;
@@ -942,20 +1059,15 @@ void loop()
     }
   }
 
-  // ----- TOUCHE OK -----
   if (okPressed)
   {
     if (currentState == STATE_MENU)
     {
       int action = menuAction[menuCursor];
       if (action == ACT_CLOSE)
-      {
         currentState = STATE_GAUGES;
-      }
       else if (action == ACT_ENTER_CONFIG)
-      {
         currentState = STATE_CONFIG;
-      }
       else if (action == ACT_TOGGLE_STYLE)
       {
         if (screenIndex == 1)
@@ -1002,7 +1114,6 @@ void loop()
     }
   }
 
-  // 3. RAFRAÎCHISSEMENT DE L'ÉCRAN
   static unsigned long lastDrawTime = 0;
   if (millis() - lastDrawTime > 32)
   {
