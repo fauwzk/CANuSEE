@@ -542,7 +542,7 @@ void fetchOBDData()
     return;
   }
 
-  // 1. On ralentit la cadence à 250ms pour ne pas saturer le calculateur
+  // 1. On ralentit la cadence à 250ms pour le mode Actif (OBD2 standard)
   if (millis() - lastCanRequest > 250)
   {
     requestOBDPID(OBD_PIDS[currentPidIndex]);
@@ -561,6 +561,37 @@ void fetchOBDData()
       lastRawData[i] = (i < lastRawDlc) ? message.data[i] : 0;
     }
 
+    // ==========================================================
+    // DÉCODAGE HYBRIDE (OBD2 Standard + Trame Sniffer Peugeot)
+    // ==========================================================
+
+    // --- 1. Mode Passif (Sniffer Peugeot - Mise à jour instantanée) ---
+    if (message.identifier == 0x0F0)
+    { // Températures (LdR / Admission)
+      coolantTemp = message.data[0] - 40;
+      intakeTemp = message.data[1] - 40;
+      dashCoolant = coolantTemp;
+      dashIAT = intakeTemp;
+    }
+    else if (message.identifier == 0x188 || message.identifier == 0x094)
+    { // Pression d'admission / Turbo
+      // Souvent en mbar absolu chez Peugeot, on retire 1 bar (1000mbar)
+      float pressAbs = ((message.data[0] << 8) | message.data[1]);
+      turboPressureState = (pressAbs - 1000.0) * 0.001;
+      dashBoost = turboPressureState;
+      mafPressure = pressAbs * 0.1; // kPa
+    }
+    else if (message.identifier == 0x189)
+    { // Charge Moteur (Engine Load)
+      engineLoad = message.data[2] * 0.4;
+      dashLoad = engineLoad;
+    }
+    else if (message.identifier == 0xB6 || message.identifier == 0x320)
+    { // Vitesse du véhicule
+      currentSpeed = ((message.data[0] << 8) | message.data[1]) * 0.01;
+    }
+
+    // --- 2. Mode Actif (Réponses standards OBD2 classiques) ---
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
       if (message.data[1] == 0x41)
@@ -589,25 +620,6 @@ void fetchOBDData()
           break;
         case 0x0D:
           currentSpeed = A;
-          if (screenIndex == 8)
-          {
-            if (currentSpeed <= 0)
-            {
-              timerReady = true;
-              timerRunning = false;
-            }
-            else if (timerReady && !timerRunning && currentSpeed > 0)
-            {
-              timerRunning = true;
-              speedTimerStart = millis();
-            }
-            else if (timerRunning && currentSpeed >= TARGET_SPEED)
-            {
-              timerRunning = false;
-              timerReady = false;
-              lastTimerValue = (millis() - speedTimerStart) / 1000.0;
-            }
-          }
           break;
         case 0x0F:
           intakeTemp = A - 40;
@@ -617,6 +629,29 @@ void fetchOBDData()
           batteryVoltage = ((A * 256) + B) / 1000.0;
           break;
         }
+      }
+    }
+
+    // ==========================================================
+    // Gestion du Chronomètre (0-X km/h) basé sur la Vitesse (quelle que soit la source)
+    // ==========================================================
+    if (screenIndex == 8)
+    {
+      if (currentSpeed <= 0)
+      {
+        timerReady = true;
+        timerRunning = false;
+      }
+      else if (timerReady && !timerRunning && currentSpeed > 0)
+      {
+        timerRunning = true;
+        speedTimerStart = millis();
+      }
+      else if (timerRunning && currentSpeed >= TARGET_SPEED)
+      {
+        timerRunning = false;
+        timerReady = false;
+        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
       }
     }
   }
@@ -888,11 +923,10 @@ void setup()
   {
     displayInfo("CAN Init...");
 
-    // NOUVEAU: On force le PULLUP interne sur la broche RX
     pinMode(CAN_RX_PIN, INPUT_PULLUP);
 
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS(); // Vitesse standard OBD PSA
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
