@@ -519,7 +519,8 @@ void clearDTC()
 
 void fetchOBDData()
 {
-  if (millis() - lastCanRequest > 50)
+  // 1. On ralentit la cadence à 250ms pour ne pas saturer le calculateur
+  if (millis() - lastCanRequest > 250)
   {
     requestOBDPID(OBD_PIDS[currentPidIndex]);
     currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
@@ -529,10 +530,26 @@ void fetchOBDData()
   twai_message_t message;
   while (twai_receive(&message, 0) == ESP_OK)
   {
+    // --- LIGNES DE DEBUG AJOUTÉES ---
+    // Affiche TOUT ce qui passe sur le bus CAN dans le moniteur série
+    Serial.print("CAN ID recu : 0x");
+    Serial.print(message.identifier, HEX);
+    Serial.print(" | DLC: ");
+    Serial.print(message.data_length_code);
+    Serial.print(" | Data: ");
+    for (int i = 0; i < message.data_length_code; i++)
+    {
+      Serial.print(message.data[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+    // ---------------------------------
+
+    // Si le message provient de l'ECU moteur (Réponses standards OBD2)
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
-      if (message.data[1] == 0x41)
-      { // Réponse au service 01
+      if (message.data[1] == 0x41) // Réponse au service 01
+      {
         uint8_t pid = message.data[2];
         float A = message.data[3];
         float B = message.data[4];
