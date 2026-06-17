@@ -487,28 +487,36 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
-// ==== CAN OBD2 Functions ====
 void requestOBDPID(uint8_t pid)
 {
   twai_message_t message;
+  memset(&message, 0, sizeof(message)); // <-- LA LIGNE MAGIQUE ICI
+
   message.identifier = 0x7DF;
-  message.extd = 0;
+  message.extd = 0; // Trame standard (11 bits)
+  message.rtr = 0;  // Data frame, pas une requête distante
   message.data_length_code = 8;
+
   message.data[0] = 0x02; // Taille données
   message.data[1] = 0x01; // Service 01
   message.data[2] = pid;  // PID demandé
   for (int i = 3; i < 8; i++)
-    message.data[i] = 0xAA; // Padding
+    message.data[i] = 0xAA; // Padding (0xAA ou 0x55 est standard)
 
+  // On envoie
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
 
 void clearDTC()
 {
   twai_message_t message;
+  memset(&message, 0, sizeof(message)); // <-- ET ICI AUSSI
+
   message.identifier = 0x7DF;
   message.extd = 0;
+  message.rtr = 0;
   message.data_length_code = 8;
+
   message.data[0] = 0x01;
   message.data[1] = 0x04; // Service 04 : Clear DTC
   for (int i = 2; i < 8; i++)
