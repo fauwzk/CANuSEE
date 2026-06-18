@@ -12,6 +12,7 @@
 
 // ==== Driver CAN (TWAI) natif ESP32 ====
 #include "driver/twai.h"
+#include "esp_sleep.h"
 
 // ==== Pins Configuration (ESP32-C3 Super Mini) ====
 #define BTN_UP 0
@@ -42,6 +43,7 @@ struct Settings
   int tick_line_gauge;
   int target_speed;
   int brightness;
+  int sleep_timeout_sec; // NOUVEAU: Temps avant la veille
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -55,6 +57,10 @@ int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
 int OLED_BRIGHTNESS = 255;
+int SLEEP_TIMEOUT_SEC = 60; // Défaut : 60 secondes
+
+// ==== Timer Gestion de l'alimentation ====
+unsigned long lastActivityTime = 0;
 
 // ==== State Machine ====
 enum AppState
@@ -169,6 +175,46 @@ unsigned long lastCanRequest = 0;
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 
+// ==========================================
+// ==== FONCTIONS DE VEILLE (DEEP SLEEP) ====
+// ==========================================
+
+void fadeInScreen()
+{
+  u8g2.setPowerSave(0);
+  for (int i = 0; i <= OLED_BRIGHTNESS; i += 5)
+  {
+    u8g2.setContrast(i);
+    delay(15);
+  }
+  u8g2.setContrast(OLED_BRIGHTNESS);
+}
+
+void goToSleep()
+{
+  Serial.println("Timeout atteint. Mise en veille profonde...");
+
+  // Fade-out
+  for (int i = OLED_BRIGHTNESS; i >= 0; i -= 5)
+  {
+    u8g2.setContrast(i);
+    delay(15);
+  }
+  u8g2.setPowerSave(1);
+  u8g2.setContrast(0);
+
+  // Extinction CAN
+  twai_stop();
+  twai_driver_uninstall();
+
+  // Configuration du réveil sur CAN_RX_PIN (Pin 10)
+  pinMode(CAN_RX_PIN, INPUT_PULLUP);
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << CAN_RX_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+
+  // Zzz...
+  esp_deep_sleep_start();
+}
+
 void drawStringCenter(int y, String text)
 {
   int w = u8g2.getStrWidth(text.c_str());
@@ -215,6 +261,7 @@ String generateWebPage()
 
   int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
   html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
+  html.replace("%SLEEP_TIMEOUT%", String(SLEEP_TIMEOUT_SEC));
   return html;
 }
 
@@ -232,6 +279,7 @@ void saveValues()
   cfg.tick_line_gauge = TICK_LINE_GAUGE;
   cfg.target_speed = TARGET_SPEED;
   cfg.brightness = OLED_BRIGHTNESS;
+  cfg.sleep_timeout_sec = SLEEP_TIMEOUT_SEC;
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
@@ -250,6 +298,7 @@ void loadValues()
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
   OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
+  SLEEP_TIMEOUT_SEC = (cfg.sleep_timeout_sec >= 10 && cfg.sleep_timeout_sec <= 3600) ? cfg.sleep_timeout_sec : 60;
 }
 
 void restart_ESP()
@@ -498,12 +547,14 @@ void requestOBDPID(uint8_t pid)
   twai_message_t message = {0};
   message.identifier = 0x7DF;
   message.extd = 0;
+  message.rtr = 0;
   message.data_length_code = 8;
   message.data[0] = 0x02;
   message.data[1] = 0x01;
   message.data[2] = pid;
+  // Utilisation de 0x55 pour le padding, mieux toléré par certains BSI PSA
   for (int i = 3; i < 8; i++)
-    message.data[i] = 0xAA;
+    message.data[i] = 0x55;
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -513,11 +564,12 @@ void clearDTC()
   twai_message_t message = {0};
   message.identifier = 0x7DF;
   message.extd = 0;
+  message.rtr = 0;
   message.data_length_code = 8;
   message.data[0] = 0x01;
   message.data[1] = 0x04;
   for (int i = 2; i < 8; i++)
-    message.data[i] = 0xAA;
+    message.data[i] = 0x55;
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -542,8 +594,8 @@ void fetchOBDData()
     return;
   }
 
-  // 1. On ralentit la cadence à 250ms pour le mode Actif (OBD2 standard)
-  if (millis() - lastCanRequest > 250)
+  // Polling un poil plus rapide (150ms) pour des jauges plus réactives
+  if (millis() - lastCanRequest > 150)
   {
     requestOBDPID(OBD_PIDS[currentPidIndex]);
     currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
@@ -553,6 +605,9 @@ void fetchOBDData()
   twai_message_t message;
   while (twai_receive(&message, 0) == ESP_OK)
   {
+    // Dès qu'on reçoit n'importe quelle trame CAN, on remet le compteur de veille à zéro !
+    lastActivityTime = millis();
+
     // --- Sauvegarde pour l'écran RAW ---
     lastRawId = message.identifier;
     lastRawDlc = message.data_length_code;
@@ -562,36 +617,8 @@ void fetchOBDData()
     }
 
     // ==========================================================
-    // DÉCODAGE HYBRIDE (OBD2 Standard + Trame Sniffer Peugeot)
+    // DÉCODAGE STANDARD OBD2 UNIQUEMENT
     // ==========================================================
-
-    // --- 1. Mode Passif (Sniffer Peugeot - Mise à jour instantanée) ---
-    if (message.identifier == 0x0F0)
-    { // Températures (LdR / Admission)
-      coolantTemp = message.data[0] - 40;
-      intakeTemp = message.data[1] - 40;
-      dashCoolant = coolantTemp;
-      dashIAT = intakeTemp;
-    }
-    else if (message.identifier == 0x188 || message.identifier == 0x094)
-    { // Pression d'admission / Turbo
-      // Souvent en mbar absolu chez Peugeot, on retire 1 bar (1000mbar)
-      float pressAbs = ((message.data[0] << 8) | message.data[1]);
-      turboPressureState = (pressAbs - 1000.0) * 0.001;
-      dashBoost = turboPressureState;
-      mafPressure = pressAbs * 0.1; // kPa
-    }
-    else if (message.identifier == 0x189)
-    { // Charge Moteur (Engine Load)
-      engineLoad = message.data[2] * 0.4;
-      dashLoad = engineLoad;
-    }
-    else if (message.identifier == 0xB6 || message.identifier == 0x320)
-    { // Vitesse du véhicule
-      currentSpeed = ((message.data[0] << 8) | message.data[1]) * 0.01;
-    }
-
-    // --- 2. Mode Actif (Réponses standards OBD2 classiques) ---
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
       if (message.data[1] == 0x41)
@@ -620,6 +647,26 @@ void fetchOBDData()
           break;
         case 0x0D:
           currentSpeed = A;
+          // Gestion du Timer
+          if (screenIndex == 8)
+          {
+            if (currentSpeed <= 0)
+            {
+              timerReady = true;
+              timerRunning = false;
+            }
+            else if (timerReady && !timerRunning && currentSpeed > 0)
+            {
+              timerRunning = true;
+              speedTimerStart = millis();
+            }
+            else if (timerRunning && currentSpeed >= TARGET_SPEED)
+            {
+              timerRunning = false;
+              timerReady = false;
+              lastTimerValue = (millis() - speedTimerStart) / 1000.0;
+            }
+          }
           break;
         case 0x0F:
           intakeTemp = A - 40;
@@ -629,29 +676,6 @@ void fetchOBDData()
           batteryVoltage = ((A * 256) + B) / 1000.0;
           break;
         }
-      }
-    }
-
-    // ==========================================================
-    // Gestion du Chronomètre (0-X km/h) basé sur la Vitesse (quelle que soit la source)
-    // ==========================================================
-    if (screenIndex == 8)
-    {
-      if (currentSpeed <= 0)
-      {
-        timerReady = true;
-        timerRunning = false;
-      }
-      else if (timerReady && !timerRunning && currentSpeed > 0)
-      {
-        timerRunning = true;
-        speedTimerStart = millis();
-      }
-      else if (timerRunning && currentSpeed >= TARGET_SPEED)
-      {
-        timerRunning = false;
-        timerReady = false;
-        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
       }
     }
   }
@@ -836,6 +860,7 @@ void startServer()
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+      if (server.hasArg("sleep_timeout")) SLEEP_TIMEOUT_SEC = server.arg("sleep_timeout").toInt();
 
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
       setOledBrightness(OLED_BRIGHTNESS);
@@ -865,6 +890,7 @@ void startServer()
   ElegantOTA.onStart([]()
                      {
     ota_updating = true; 
+    lastActivityTime = millis(); // Empêche la mise en veille pendant l'OTA
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(35, "OTA UPDATING");
@@ -903,13 +929,30 @@ void setup()
 
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
-  setOledBrightness(OLED_BRIGHTNESS);
+
+  // Vérifie si on vient de se réveiller d'une veille profonde
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  bool wokeUpFromSleep = (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO);
+
+  if (wokeUpFromSleep)
+  {
+    Serial.println("Reveil declenché par le bus CAN !");
+    u8g2.setContrast(0); // L'écran reste éteint au tout début pour le Fade-in
+  }
+  else
+  {
+    setOledBrightness(OLED_BRIGHTNESS);
+  }
 
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText(version_string);
   u8g2.sendBuffer();
 
+  if (wokeUpFromSleep)
+  {
+    fadeInScreen();
+  }
   delay(1500);
 
   if (!LittleFS.begin())
@@ -947,6 +990,9 @@ void setup()
   }
 
   startServer();
+
+  // Initialisation du compteur d'inactivité
+  lastActivityTime = millis();
 }
 
 // ==== Main Loop ====
@@ -956,8 +1002,18 @@ void loop()
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
+  // VERIFICATION DU TIMEOUT DE VEILLE
+  if (!ota_updating && currentState != STATE_CONFIG)
+  {
+    if (millis() - lastActivityTime > (SLEEP_TIMEOUT_SEC * 1000UL))
+    {
+      goToSleep();
+    }
+  }
+
   if (ota_updating)
   {
+    lastActivityTime = millis();
     yield();
     return;
   }
@@ -972,6 +1028,12 @@ void loop()
   bool downPressed = btnDown.pressed();
   bool okPressed = btnOk.pressed();
   bool menuPressed = btnMenu.pressed();
+
+  // Si on touche un bouton, on réinitialise le chronomètre de mise en veille
+  if (upPressed || downPressed || okPressed || menuPressed)
+  {
+    lastActivityTime = millis();
+  }
 
   if (menuPressed)
   {
