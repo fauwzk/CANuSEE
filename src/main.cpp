@@ -185,7 +185,7 @@ void fadeInScreen()
   for (int i = 0; i <= OLED_BRIGHTNESS; i += 5)
   {
     u8g2.setContrast(i);
-    delay(15);
+    delay(25); // Fondu un peu plus lent et fluide
   }
   u8g2.setContrast(OLED_BRIGHTNESS);
 }
@@ -552,9 +552,9 @@ void requestOBDPID(uint8_t pid)
   message.data[0] = 0x02;
   message.data[1] = 0x01;
   message.data[2] = pid;
-  // Utilisation de 0x55 pour le padding, mieux toléré par certains BSI PSA
+  // Padding 0xAA est plus robuste pour certains BSI s'ils attendent du traffic OBD2
   for (int i = 3; i < 8; i++)
-    message.data[i] = 0x55;
+    message.data[i] = 0xAA;
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -569,7 +569,7 @@ void clearDTC()
   message.data[0] = 0x01;
   message.data[1] = 0x04;
   for (int i = 2; i < 8; i++)
-    message.data[i] = 0x55;
+    message.data[i] = 0xAA;
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -594,7 +594,7 @@ void fetchOBDData()
     return;
   }
 
-  // Polling un poil plus rapide (150ms) pour des jauges plus réactives
+  // Polling Actif (Requetes 0x7DF) toutes les 150ms
   if (millis() - lastCanRequest > 150)
   {
     requestOBDPID(OBD_PIDS[currentPidIndex]);
@@ -605,7 +605,11 @@ void fetchOBDData()
   twai_message_t message;
   while (twai_receive(&message, 0) == ESP_OK)
   {
-    // Dès qu'on reçoit n'importe quelle trame CAN, on remet le compteur de veille à zéro !
+    // ==========================================================
+    // C'EST ICI LA MAGIE DE LA VEILLE PROFONDE :
+    // Chaque trame CAN reçue réinitialise le compteur de mise en veille.
+    // Dès que le BSI s'endort, l'ESP32 n'entend plus rien et s'éteint.
+    // ==========================================================
     lastActivityTime = millis();
 
     // --- Sauvegarde pour l'écran RAW ---
@@ -617,8 +621,35 @@ void fetchOBDData()
     }
 
     // ==========================================================
-    // DÉCODAGE STANDARD OBD2 UNIQUEMENT
+    // DÉCODAGE HYBRIDE (OBD2 STANDARD + SNIFFER PEUGEOT)
     // ==========================================================
+
+    // 1. Décodage passif spécifique Peugeot (pour le 3008)
+    if (message.identifier == 0x0F0)
+    {
+      coolantTemp = message.data[0] - 40;
+      intakeTemp = message.data[1] - 40;
+      dashCoolant = coolantTemp;
+      dashIAT = intakeTemp;
+    }
+    else if (message.identifier == 0x188 || message.identifier == 0x094)
+    {
+      float pressAbs = ((message.data[0] << 8) | message.data[1]);
+      turboPressureState = (pressAbs - 1000.0) * 0.001;
+      dashBoost = turboPressureState;
+      mafPressure = pressAbs * 0.1;
+    }
+    else if (message.identifier == 0x189)
+    {
+      engineLoad = message.data[2] * 0.4;
+      dashLoad = engineLoad;
+    }
+    else if (message.identifier == 0xB6 || message.identifier == 0x320)
+    {
+      currentSpeed = ((message.data[0] << 8) | message.data[1]) * 0.01;
+    }
+
+    // 2. Décodage actif OBD2 (Au cas où ton calculateur réponde aux questions)
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
       if (message.data[1] == 0x41)
@@ -647,26 +678,6 @@ void fetchOBDData()
           break;
         case 0x0D:
           currentSpeed = A;
-          // Gestion du Timer
-          if (screenIndex == 8)
-          {
-            if (currentSpeed <= 0)
-            {
-              timerReady = true;
-              timerRunning = false;
-            }
-            else if (timerReady && !timerRunning && currentSpeed > 0)
-            {
-              timerRunning = true;
-              speedTimerStart = millis();
-            }
-            else if (timerRunning && currentSpeed >= TARGET_SPEED)
-            {
-              timerRunning = false;
-              timerReady = false;
-              lastTimerValue = (millis() - speedTimerStart) / 1000.0;
-            }
-          }
           break;
         case 0x0F:
           intakeTemp = A - 40;
@@ -676,6 +687,27 @@ void fetchOBDData()
           batteryVoltage = ((A * 256) + B) / 1000.0;
           break;
         }
+      }
+    }
+
+    // Gestion du Timer (s'appuie sur currentSpeed, quelle que soit la méthode de calcul)
+    if (screenIndex == 8)
+    {
+      if (currentSpeed <= 0)
+      {
+        timerReady = true;
+        timerRunning = false;
+      }
+      else if (timerReady && !timerRunning && currentSpeed > 0)
+      {
+        timerRunning = true;
+        speedTimerStart = millis();
+      }
+      else if (timerRunning && currentSpeed >= TARGET_SPEED)
+      {
+        timerRunning = false;
+        timerReady = false;
+        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
       }
     }
   }
@@ -946,14 +978,20 @@ void setup()
 
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-  draw_BottomText(version_string);
+
+  // On affiche le texte de version uniquement au démarrage à froid
+  if (!wokeUpFromSleep)
+  {
+    draw_BottomText(version_string);
+  }
+
   u8g2.sendBuffer();
 
   if (wokeUpFromSleep)
   {
     fadeInScreen();
   }
-  delay(1500);
+  delay(2000); // Laisse le logo affiché un peu plus longtemps (2 secondes)
 
   if (!LittleFS.begin())
   {
@@ -969,7 +1007,7 @@ void setup()
     pinMode(CAN_RX_PIN, INPUT_PULLUP);
 
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS(); // OBD standard
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
