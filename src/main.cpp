@@ -14,7 +14,7 @@
 #include "driver/twai.h"
 #include "esp_sleep.h"
 
-// ==== Pins Configuration (ESP32-C3 Super Mini) ====
+// ==== Pins Configuration ====
 #define BTN_UP 0
 #define BTN_DOWN 1
 #define BTN_OK 6
@@ -43,7 +43,7 @@ struct Settings
   int tick_line_gauge;
   int target_speed;
   int brightness;
-  int sleep_timeout_sec; // NOUVEAU: Temps avant la veille
+  int sleep_timeout_sec;
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -57,12 +57,10 @@ int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
 int OLED_BRIGHTNESS = 255;
-int SLEEP_TIMEOUT_SEC = 60; // Défaut : 60 secondes
+int SLEEP_TIMEOUT_SEC = 60;
 
-// ==== Timer Gestion de l'alimentation ====
 unsigned long lastActivityTime = 0;
 
-// ==== State Machine ====
 enum AppState
 {
   STATE_GAUGES,
@@ -75,46 +73,36 @@ enum AppState
 };
 AppState currentState = STATE_GAUGES;
 
-// ==== OTA State ====
 bool ota_updating = false;
 
-// ==== Dashboard refresh state ====
-uint8_t dashStep = 0;
-float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashLoad = 0;
+float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0;
 
 String version_string = "CANuSEE " FW_VERSION;
 
-// ==== OLED (U8g2) - Pins 21 (SCL) et 20 (SDA) ====
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 
-// ==== Coordinates & State ====
 const int centerX = 64;
 const int screenNumbers = 11;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
 
-// ==== Raw CAN State ====
 uint32_t lastRawId = 0;
 uint8_t lastRawDlc = 0;
 uint8_t lastRawData[8] = {0};
 
-// ==== Variables Capteurs ====
-float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0;
+float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 
-// ==== Variables DTC ====
 String dtcCodes[15];
 int dtcCountFound = 0;
 
-// ==== Timer State ====
 bool timerRunning = false;
 bool timerReady = false;
 unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
-// ==== Dynamic Menu Variables ====
 #define MAX_MENU_ITEMS 24
 String menuText[MAX_MENU_ITEMS];
 int menuAction[MAX_MENU_ITEMS];
@@ -131,9 +119,8 @@ int menuCursor = 0;
 #define ACT_ENTER_CONFIG 7
 #define ACT_GO_SCREEN_0 10
 
-const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "Raw"};
+const char *screenNames[] = {"MAF", "Boost", "IAT", "RPM/Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "Raw"};
 
-// ==== Boutons Struct ====
 struct Button
 {
   uint8_t pin;
@@ -165,19 +152,13 @@ Button btnDown = {BTN_DOWN, false, false, 0};
 Button btnOk = {BTN_OK, false, false, 0};
 Button btnMenu = {BTN_MENU, false, false, 0};
 
-// ==== CAN Polling Variables ====
-const uint8_t OBD_PIDS[] = {0x01, 0x04, 0x05, 0x0B, 0x0D, 0x0F, 0x42};
+// Liste des PIDs enrichie avec RPM (0x0C) et MAF (0x10)
+const uint8_t OBD_PIDS[] = {0x05, 0x0C, 0x0B, 0x0F, 0x10, 0x0D};
 const uint8_t NUM_PIDS = sizeof(OBD_PIDS) / sizeof(OBD_PIDS[0]);
 uint8_t currentPidIndex = 0;
 unsigned long lastCanRequest = 0;
 
-// ------------------------------------------------------------------------------------------------
-
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
-
-// ==========================================
-// ==== FONCTIONS DE VEILLE (DEEP SLEEP) ====
-// ==========================================
 
 void fadeInScreen()
 {
@@ -185,7 +166,7 @@ void fadeInScreen()
   for (int i = 0; i <= OLED_BRIGHTNESS; i += 5)
   {
     u8g2.setContrast(i);
-    delay(25); // Fondu un peu plus lent et fluide
+    delay(25);
   }
   u8g2.setContrast(OLED_BRIGHTNESS);
 }
@@ -193,8 +174,6 @@ void fadeInScreen()
 void goToSleep()
 {
   Serial.println("Timeout atteint. Mise en veille profonde...");
-
-  // Fade-out
   for (int i = OLED_BRIGHTNESS; i >= 0; i -= 5)
   {
     u8g2.setContrast(i);
@@ -203,15 +182,11 @@ void goToSleep()
   u8g2.setPowerSave(1);
   u8g2.setContrast(0);
 
-  // Extinction CAN
   twai_stop();
   twai_driver_uninstall();
 
-  // Configuration du réveil sur CAN_RX_PIN (Pin 10)
   pinMode(CAN_RX_PIN, INPUT_PULLUP);
   esp_deep_sleep_enable_gpio_wakeup(1ULL << CAN_RX_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
-
-  // Zzz...
   esp_deep_sleep_start();
 }
 
@@ -233,7 +208,6 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
-// ==== HTML Generator ====
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -265,7 +239,6 @@ String generateWebPage()
   return html;
 }
 
-// ==== EEPROM Functions ====
 void saveValues()
 {
   cfg.last_screen = screenIndex;
@@ -355,7 +328,6 @@ void draw_InfoText(String title, double value, String unit)
   drawStringCenter(40, valStr + " " + unit);
 }
 
-// ==== Dynamic Menu Builder ====
 void buildMenu()
 {
   menuSize = 0;
@@ -467,7 +439,6 @@ void drawConfigScreen()
   draw_BottomText("Appui Menu pour Quitter");
 }
 
-// ==== History Buffers & Gauge Drawing ====
 #define AREA_CHART_HISTORY 94
 struct AreaChartData
 {
@@ -476,7 +447,7 @@ struct AreaChartData
   bool initialized;
 };
 AreaChartData turboHistory = {{0}, 0, false};
-AreaChartData loadHistory = {{0}, 0, false};
+AreaChartData rpmHistory = {{0}, 0, false}; // Remplacé loadHistory par rpmHistory
 AreaChartData batteryHistory = {{0}, 0, false};
 AreaChartData coolantHistory = {{0}, 0, false};
 AreaChartData iatHistory = {{0}, 0, false};
@@ -545,16 +516,22 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
 void requestOBDPID(uint8_t pid)
 {
   twai_message_t message = {0};
+
+  // RETOUR À LA NORMALE : On diffuse à tous les calculateurs via 0x7DF
   message.identifier = 0x7DF;
   message.extd = 0;
   message.rtr = 0;
   message.data_length_code = 8;
-  message.data[0] = 0x02;
-  message.data[1] = 0x01;
-  message.data[2] = pid;
-  // Padding 0xAA est plus robuste pour certains BSI s'ils attendent du traffic OBD2
+
+  message.data[0] = 0x02; // 2 octets de données utiles
+  message.data[1] = 0x01; // Mode 01
+  message.data[2] = pid;  // Le capteur demandé
+
+  // Remplissage strict ELM327 avec des 0x00, indispensable pour le BSI Peugeot
   for (int i = 3; i < 8; i++)
-    message.data[i] = 0xAA;
+  {
+    message.data[i] = 0x00;
+  }
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -569,7 +546,7 @@ void clearDTC()
   message.data[0] = 0x01;
   message.data[1] = 0x04;
   for (int i = 2; i < 8; i++)
-    message.data[i] = 0xAA;
+    message.data[i] = 0x00;
 
   twai_transmit(&message, pdMS_TO_TICKS(10));
 }
@@ -590,12 +567,10 @@ void fetchOBDData()
     return;
   }
   if (status_info.state != TWAI_STATE_RUNNING)
-  {
     return;
-  }
 
-  // Polling Actif (Requetes 0x7DF) toutes les 150ms
-  if (millis() - lastCanRequest > 150)
+  // On repasse à 200ms pour être sûr que le BSI a le temps de traiter (comme l'ELM)
+  if (millis() - lastCanRequest > 200)
   {
     requestOBDPID(OBD_PIDS[currentPidIndex]);
     currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
@@ -605,14 +580,8 @@ void fetchOBDData()
   twai_message_t message;
   while (twai_receive(&message, 0) == ESP_OK)
   {
-    // ==========================================================
-    // C'EST ICI LA MAGIE DE LA VEILLE PROFONDE :
-    // Chaque trame CAN reçue réinitialise le compteur de mise en veille.
-    // Dès que le BSI s'endort, l'ESP32 n'entend plus rien et s'éteint.
-    // ==========================================================
     lastActivityTime = millis();
 
-    // --- Sauvegarde pour l'écran RAW ---
     lastRawId = message.identifier;
     lastRawDlc = message.data_length_code;
     for (int i = 0; i < 8; i++)
@@ -620,36 +589,7 @@ void fetchOBDData()
       lastRawData[i] = (i < lastRawDlc) ? message.data[i] : 0;
     }
 
-    // ==========================================================
-    // DÉCODAGE HYBRIDE (OBD2 STANDARD + SNIFFER PEUGEOT)
-    // ==========================================================
-
-    // 1. Décodage passif spécifique Peugeot (pour le 3008)
-    if (message.identifier == 0x0F0)
-    {
-      coolantTemp = message.data[0] - 40;
-      intakeTemp = message.data[1] - 40;
-      dashCoolant = coolantTemp;
-      dashIAT = intakeTemp;
-    }
-    else if (message.identifier == 0x188 || message.identifier == 0x094)
-    {
-      float pressAbs = ((message.data[0] << 8) | message.data[1]);
-      turboPressureState = (pressAbs - 1000.0) * 0.001;
-      dashBoost = turboPressureState;
-      mafPressure = pressAbs * 0.1;
-    }
-    else if (message.identifier == 0x189)
-    {
-      engineLoad = message.data[2] * 0.4;
-      dashLoad = engineLoad;
-    }
-    else if (message.identifier == 0xB6 || message.identifier == 0x320)
-    {
-      currentSpeed = ((message.data[0] << 8) | message.data[1]) * 0.01;
-    }
-
-    // 2. Décodage actif OBD2 (Au cas où ton calculateur réponde aux questions)
+    // Le BSI ou l'ECU va répondre entre 0x7E8 et 0x7EF
     if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
     {
       if (message.data[1] == 0x41)
@@ -663,34 +603,39 @@ void fetchOBDData()
         case 0x01:
           dtcCountFound = message.data[3] & 0x7F;
           break;
-        case 0x04:
+        case 0x04: // Load
           engineLoad = (A * 100.0) / 255.0;
-          dashLoad = engineLoad;
           break;
-        case 0x05:
+        case 0x05: // Coolant
           coolantTemp = A - 40;
           dashCoolant = coolantTemp;
           break;
-        case 0x0B:
-          mafPressure = A;
-          turboPressureState = (A - 100) * 0.01;
+        case 0x0B:         // MAP (Manifold Absolute Pressure) = Pression Admission/Turbo
+          mafPressure = A; // kPa (on l'affiche en kPa)
+          turboPressureState = (A - 100.0) * 0.01;
+          if (turboPressureState < 0)
+            turboPressureState = 0;
           dashBoost = turboPressureState;
           break;
-        case 0x0D:
+        case 0x0C: // NOUVEAU: RPM (Régime Moteur)
+          engineRPM = ((A * 256.0) + B) / 4.0;
+          dashRPM = engineRPM;
+          break;
+        case 0x0D: // Vitesse
           currentSpeed = A;
           break;
-        case 0x0F:
+        case 0x0F: // IAT (Température d'admission)
           intakeTemp = A - 40;
           dashIAT = intakeTemp;
           break;
-        case 0x42:
-          batteryVoltage = ((A * 256) + B) / 1000.0;
+        case 0x10: // MAF (Débitmètre d'air)
+          mafPressure = ((A * 256.0) + B) / 100.0;
           break;
         }
       }
     }
 
-    // Gestion du Timer (s'appuie sur currentSpeed, quelle que soit la méthode de calcul)
+    // Gestion du Timer 0-X km/h
     if (screenIndex == 8)
     {
       if (currentSpeed <= 0)
@@ -718,7 +663,7 @@ void draw_GaugeScreen(uint8_t index)
   switch (index)
   {
   case 0:
-    draw_InfoText("Pression MAF", mafPressure, "kPa");
+    draw_InfoText("MAP / MAF Air", mafPressure, "kPa/gs");
     break;
   case 1:
     if (BOOST_SCREEN == 0)
@@ -734,9 +679,9 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 3:
     if (ENGLOAD_SCREEN == 0)
-      draw_InfoText("Charge moteur", engineLoad, "%");
+      draw_InfoText("Regime Moteur", engineRPM, "tr/m");
     else
-      draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge moteur", "%");
+      draw_AreaChartWithHistory(rpmHistory, engineRPM, 0, 5000, "Regime", "RPM");
     break;
   case 4:
     if (BATTERY_SCREEN == 0)
@@ -777,8 +722,9 @@ void draw_GaugeScreen(uint8_t index)
     drawStringLeft(64, 22, String(dashIAT, 1) + " C");
     drawStringLeft(0, 32, "COOL:");
     drawStringLeft(0, 42, String(dashCoolant, 1) + " C");
-    drawStringLeft(64, 32, "LOAD:");
-    drawStringLeft(64, 42, String(dashLoad, 1) + " %");
+    // Changement ici: Affichage RPM au lieu de LOAD sur le tableau de bord
+    drawStringLeft(64, 32, "RPM:");
+    drawStringLeft(64, 42, String((int)dashRPM) + " tr");
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
     break;
@@ -798,7 +744,7 @@ void draw_GaugeScreen(uint8_t index)
   case 9:
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
-  case 10: // ÉCRAN DIAGNOSTIC : RAW DATA ET ERREURS
+  case 10:
   {
     u8g2.setFont(u8g2_font_helvR10_tr);
     drawStringCenter(10, "RAW CAN DATA");
@@ -866,7 +812,6 @@ void draw_GaugeScreen(uint8_t index)
   }
 }
 
-// ==== Network & Captive Portal ====
 void startCaptivePortal()
 {
   WiFi.softAP(ssid, NULL);
@@ -918,11 +863,10 @@ void startServer()
         server.send(200, "application/json", json); });
 
   ElegantOTA.begin(&server);
-
   ElegantOTA.onStart([]()
                      {
     ota_updating = true; 
-    lastActivityTime = millis(); // Empêche la mise en veille pendant l'OTA
+    lastActivityTime = millis(); 
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(35, "OTA UPDATING");
@@ -932,7 +876,6 @@ void startServer()
   server.begin();
 }
 
-// ==== Setup ====
 void setup()
 {
   Serial.begin(115200);
@@ -950,11 +893,8 @@ void setup()
   pinMode(BTN_MENU, INPUT_PULLUP);
 
   delay(500);
-
   if (digitalRead(BTN_OK) == LOW)
-  {
     currentState = STATE_CONFIG;
-  }
 
   u8g2.begin();
   u8g2.setBusClock(400000);
@@ -962,14 +902,12 @@ void setup()
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
 
-  // Vérifie si on vient de se réveiller d'une veille profonde
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   bool wokeUpFromSleep = (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO);
 
   if (wokeUpFromSleep)
   {
-    Serial.println("Reveil declenché par le bus CAN !");
-    u8g2.setContrast(0); // L'écran reste éteint au tout début pour le Fade-in
+    u8g2.setContrast(0);
   }
   else
   {
@@ -978,20 +916,13 @@ void setup()
 
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-
-  // On affiche le texte de version uniquement au démarrage à froid
   if (!wokeUpFromSleep)
-  {
     draw_BottomText(version_string);
-  }
-
   u8g2.sendBuffer();
 
   if (wokeUpFromSleep)
-  {
     fadeInScreen();
-  }
-  delay(2000); // Laisse le logo affiché un peu plus longtemps (2 secondes)
+  delay(2000);
 
   if (!LittleFS.begin())
   {
@@ -1003,11 +934,9 @@ void setup()
   if (currentState != STATE_CONFIG)
   {
     displayInfo("CAN Init...");
-
     pinMode(CAN_RX_PIN, INPUT_PULLUP);
-
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS(); // OBD standard
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
@@ -1028,25 +957,19 @@ void setup()
   }
 
   startServer();
-
-  // Initialisation du compteur d'inactivité
   lastActivityTime = millis();
 }
 
-// ==== Main Loop ====
 void loop()
 {
   server.handleClient();
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
-  // VERIFICATION DU TIMEOUT DE VEILLE
   if (!ota_updating && currentState != STATE_CONFIG)
   {
     if (millis() - lastActivityTime > (SLEEP_TIMEOUT_SEC * 1000UL))
-    {
       goToSleep();
-    }
   }
 
   if (ota_updating)
@@ -1057,21 +980,15 @@ void loop()
   }
 
   if (currentState == STATE_GAUGES)
-  {
     fetchOBDData();
-  }
 
-  // 2. LECTURE DES 4 BOUTONS
   bool upPressed = btnUp.pressed();
   bool downPressed = btnDown.pressed();
   bool okPressed = btnOk.pressed();
   bool menuPressed = btnMenu.pressed();
 
-  // Si on touche un bouton, on réinitialise le chronomètre de mise en veille
   if (upPressed || downPressed || okPressed || menuPressed)
-  {
     lastActivityTime = millis();
-  }
 
   if (menuPressed)
   {
@@ -1093,7 +1010,6 @@ void loop()
   if (upPressed || downPressed)
   {
     int dir = upPressed ? -1 : 1;
-
     if (currentState == STATE_GAUGES)
     {
       if (upPressed)
