@@ -11,8 +11,6 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
-// test
-
 // ==== BLE Libraries (Remplacent ELMduino pour la vitesse) ====
 #include <BLEDevice.h>
 #include <BLEUtils.h>
