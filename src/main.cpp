@@ -182,12 +182,14 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
     char c = (char)pData[i];
     if (c == '>')
     {
-      elmResponseReady = true; // Fin du message reçue, déclenchement immédiat !
+      elmResponseReady = true;
     }
-    else if (c != '\r' && c != '\n' && c != ' ')
-    {
+    else if (c != '\r' && c != '\n')
+    { // On garde les espaces, ils peuvent être utiles
       elmBuffer += c;
     }
+    // Si on reçoit des données mais pas de '>', on force le déclenchement après un court délai
+    // pour éviter de rester bloqué.
   }
 }
 
@@ -209,43 +211,38 @@ class MyClientCallback : public BLEClientCallbacks
 
 bool connectToServer()
 {
-  bleStatusStr = "Connecting...";
+  bleStatusStr = "Searching...";
   BLEClient *pClient = BLEDevice::createClient();
   pClient->setClientCallbacks(new MyClientCallback());
 
   if (!pClient->connect(myDevice))
     return false;
 
-  BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
-  if (pRemoteService == nullptr)
+  // On itère sur TOUS les services du dongle
+  std::map<std::string, BLERemoteService *> *pServices = pClient->getServices();
+  for (auto const &[key, pService] : *pServices)
   {
-    pRemoteService = pClient->getService(fallbackServiceUUID);
-    if (pRemoteService == nullptr)
+    // On cherche toutes les caractéristiques dans chaque service
+    std::map<std::string, BLERemoteCharacteristic *> *pChars = pService->getCharacteristics();
+    for (auto const &[key2, pChar] : *pChars)
     {
-      pClient->disconnect();
-      return false;
+      if (pChar->canNotify())
+      {
+        pRemoteCharacteristic = pChar;
+        pRemoteCharacteristic->registerForNotify(notifyCallback);
+
+        // Active notification pour chaque caractéristique trouvée
+        const uint8_t enableValue[] = {0x01, 0x00};
+        BLERemoteDescriptor *pDesc = pChar->getDescriptor(BLEUUID((uint16_t)0x2902));
+        if (pDesc != nullptr)
+          pDesc->writeValue((uint8_t *)enableValue, 2, true);
+
+        bleStatusStr = "Found Data Char!";
+        return true; // On a trouvé un canal de données, on s'arrête ici
+      }
     }
   }
-
-  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
-  if (pRemoteCharacteristic == nullptr)
-  {
-    pRemoteCharacteristic = pRemoteService->getCharacteristic(fallbackCharUUID);
-    if (pRemoteCharacteristic == nullptr)
-    {
-      pClient->disconnect();
-      return false;
-    }
-  }
-
-  if (pRemoteCharacteristic->canNotify())
-    pRemoteCharacteristic->registerForNotify(notifyCallback);
-
-  bleStatusStr = "Init ELM327...";
-  elmInitStep = 0;
-  elmBuffer = "";
-  elmResponseReady = false;
-  return true;
+  return false;
 }
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
@@ -266,7 +263,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
 
 void sendELMCommand(String cmd)
 {
-  cmd += "\r";
+  cmd += "\r\n"; // Modification ici
   if (connected && pRemoteCharacteristic != nullptr)
   {
     pRemoteCharacteristic->writeValue(cmd.c_str(), cmd.length());
@@ -333,7 +330,7 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
-// Machine d'état Asynchrone Ultra Rapide
+// Machine d'état Asynchrone forcée
 void processBLE()
 {
   if (doConnect == true)
@@ -347,13 +344,23 @@ void processBLE()
 
   if (connected)
   {
-    bool triggerNextRequest = false;
+    // Si on est connecté mais bloqué à Step 0, on insiste avec ATZ
+    static unsigned long lastRetry = 0;
+    if (elmInitStep == 0 && (millis() - lastRetry > 2000))
+    {
+      sendELMCommand("ATZ");
+      lastRetry = millis();
+    }
 
     if (elmResponseReady)
     {
       if (elmInitStep < 5)
       {
+        // Peu importe ce qu'il répond, on passe à l'étape suivante
+        // pour voir si ça débloque le flux
         elmInitStep++;
+        Serial.print("Next Step: ");
+        Serial.println(elmInitStep);
       }
       else
       {
@@ -361,38 +368,18 @@ void processBLE()
       }
       elmBuffer = "";
       elmResponseReady = false;
-      triggerNextRequest = true; // On n'attend pas, on tire la requête suivante !
     }
 
-    // Timeout de sécurité (si l'ELM rate un caractère)
-    if (!elmResponseReady && (millis() - lastElmRequest > 250))
+    // Polling si on est enfin initialisé
+    if (elmInitStep >= 5 && (millis() - lastElmRequest > 150))
     {
-      triggerNextRequest = true;
-    }
-
-    if (triggerNextRequest)
-    {
-      if (elmInitStep == 0)
-        sendELMCommand("ATZ");
-      else if (elmInitStep == 1)
-        sendELMCommand("ATE0");
-      else if (elmInitStep == 2)
-        sendELMCommand("ATL0");
-      else if (elmInitStep == 3)
-        sendELMCommand("ATS0");
-      else if (elmInitStep == 4)
-        sendELMCommand("ATSP0");
-      else
-      {
-        currentExpectedPID = OBD_PIDS[currentPidIndex];
-        String cmd = "01";
-        if (currentExpectedPID < 0x10)
-          cmd += "0";
-        cmd += String(currentExpectedPID, HEX);
-        sendELMCommand(cmd);
-
-        currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
-      }
+      currentExpectedPID = OBD_PIDS[currentPidIndex];
+      String cmd = "01";
+      if (currentExpectedPID < 0x10)
+        cmd += "0";
+      cmd += String(currentExpectedPID, HEX);
+      sendELMCommand(cmd);
+      currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
     }
   }
   else if (doScan)
@@ -400,7 +387,6 @@ void processBLE()
     BLEDevice::getScan()->start(2, false);
   }
 }
-// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 
@@ -801,23 +787,20 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 10:
   {
-    u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(12, "BLE ELM327 STATUS");
-    u8g2.drawLine(0, 16, 128, 16);
+    u8g2.setFont(u8g2_font_5x7_tr);
+    u8g2.setCursor(0, 10);
+    u8g2.print("Status: ");
+    u8g2.print(bleStatusStr);
 
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(30, bleStatusStr);
+    u8g2.setCursor(0, 25);
+    u8g2.print("Buffer: ");
+    u8g2.print(elmBuffer);
 
-    if (connected)
-    {
-      if (elmInitStep < 5)
-        drawStringCenter(42, "Step: " + String(elmInitStep) + "/5");
-      else
-        drawStringCenter(42, "Polling Data OK");
-    }
+    u8g2.setCursor(0, 40);
+    u8g2.print("RSSI: ");
+    u8g2.print(myDevice ? String(myDevice->getRSSI()) : "N/A");
 
-    draw_BottomText(version_string);
-    draw_ScreenNumber(screenIndex);
+    u8g2.sendBuffer();
   }
   break;
   }
@@ -924,6 +907,7 @@ void setup()
   // Initialisation du BLE asynchrone ultra rapide
   if (currentState != STATE_CONFIG)
   {
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT); // Force l'encryption
     BLEDevice::init("CANuSEE");
     BLEScan *pBLEScan = BLEDevice::getScan();
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
