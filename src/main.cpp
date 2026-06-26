@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <EEPROM.h>
 #include <U8g2lib.h>
@@ -10,18 +11,17 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
-// ==== Driver CAN (TWAI) natif ESP32 ====
-#include "driver/twai.h"
-#include "esp_sleep.h"
+// ==== BLE Libraries (Remplacent ELMduino pour la vitesse) ====
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
 
-// ==== Pins Configuration ====
+// ==== Pins Configuration (4 Boutons) ====
 #define BTN_UP 0
 #define BTN_DOWN 1
 #define BTN_OK 6
 #define BTN_MENU 3
-
-#define CAN_RX_PIN 10
-#define CAN_TX_PIN 7
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
@@ -43,7 +43,6 @@ struct Settings
   int tick_line_gauge;
   int target_speed;
   int brightness;
-  int sleep_timeout_sec;
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -57,10 +56,8 @@ int IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2;
 int TARGET_SPEED = 100;
 int OLED_BRIGHTNESS = 255;
-int SLEEP_TIMEOUT_SEC = 60;
 
-unsigned long lastActivityTime = 0;
-
+// ==== State Machine ====
 enum AppState
 {
   STATE_GAUGES,
@@ -75,34 +72,32 @@ AppState currentState = STATE_GAUGES;
 
 bool ota_updating = false;
 
-float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0;
-
 String version_string = "CANuSEE " FW_VERSION;
 
+// ==== OLED (U8g2) ====
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 
+// ==== Coordinates & State ====
 const int centerX = 64;
-const int screenNumbers = 11;
+const int screenNumbers = 11; // Ajout de l'écran BLE Status
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7;
 float TURBO_MAX_BAR = 1.5;
 
-uint32_t lastRawId = 0;
-uint8_t lastRawDlc = 0;
-uint8_t lastRawData[8] = {0};
-
 float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
+float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
-String dtcCodes[15];
 int dtcCountFound = 0;
 
+// ==== Timer State ====
 bool timerRunning = false;
 bool timerReady = false;
 unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0;
 float currentSpeed = 0.0;
 
+// ==== Dynamic Menu Variables ====
 #define MAX_MENU_ITEMS 24
 String menuText[MAX_MENU_ITEMS];
 int menuAction[MAX_MENU_ITEMS];
@@ -119,8 +114,9 @@ int menuCursor = 0;
 #define ACT_ENTER_CONFIG 7
 #define ACT_GO_SCREEN_0 10
 
-const char *screenNames[] = {"MAF", "Boost", "IAT", "RPM/Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "Raw"};
+const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "BLE"};
 
+// ==== Struct 4 Boutons ====
 struct Button
 {
   uint8_t pin;
@@ -152,43 +148,261 @@ Button btnDown = {BTN_DOWN, false, false, 0};
 Button btnOk = {BTN_OK, false, false, 0};
 Button btnMenu = {BTN_MENU, false, false, 0};
 
-// Liste des PIDs enrichie avec RPM (0x0C) et MAF (0x10)
-const uint8_t OBD_PIDS[] = {0x05, 0x0C, 0x0B, 0x0F, 0x10, 0x0D};
+// ==========================================
+// ==== BLE & ELM327 CUSTOM FAST ENGINE  ====
+// ==========================================
+static BLEUUID serviceUUID("0000ffe0-0000-1000-8000-00805f9b34fb"); // ELM327 BLE Standard
+static BLEUUID charUUID("0000ffe1-0000-1000-8000-00805f9b34fb");
+static BLEUUID fallbackServiceUUID("0000fff0-0000-1000-8000-00805f9b34fb"); // V-Link fallback
+static BLEUUID fallbackCharUUID("0000fff1-0000-1000-8000-00805f9b34fb");
+
+static boolean doConnect = false;
+static boolean connected = false;
+static boolean doScan = false;
+static BLERemoteCharacteristic *pRemoteCharacteristic;
+static BLEAdvertisedDevice *myDevice;
+
+String bleStatusStr = "Scanning...";
+String elmBuffer = "";
+bool elmResponseReady = false;
+
+int elmInitStep = 0;
+unsigned long lastElmRequest = 0;
+uint8_t currentExpectedPID = 0;
+
+// Ordre de priorité des PIDs (Optimisé pour la vitesse des jauges dynamiques)
+const uint8_t OBD_PIDS[] = {0x0B, 0x0C, 0x0D, 0x04, 0x05, 0x0F, 0x10};
 const uint8_t NUM_PIDS = sizeof(OBD_PIDS) / sizeof(OBD_PIDS[0]);
 uint8_t currentPidIndex = 0;
-unsigned long lastCanRequest = 0;
+
+static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
+{
+  for (int i = 0; i < length; i++)
+  {
+    char c = (char)pData[i];
+    if (c == '>')
+    {
+      elmResponseReady = true; // Fin du message reçue, déclenchement immédiat !
+    }
+    else if (c != '\r' && c != '\n' && c != ' ')
+    {
+      elmBuffer += c;
+    }
+  }
+}
+
+class MyClientCallback : public BLEClientCallbacks
+{
+  void onConnect(BLEClient *pclient)
+  {
+    connected = true;
+    bleStatusStr = "Connected!";
+  }
+  void onDisconnect(BLEClient *pclient)
+  {
+    connected = false;
+    bleStatusStr = "Disconnected";
+    elmInitStep = 0;
+    doScan = true;
+  }
+};
+
+bool connectToServer()
+{
+  bleStatusStr = "Connecting...";
+  BLEClient *pClient = BLEDevice::createClient();
+  pClient->setClientCallbacks(new MyClientCallback());
+
+  if (!pClient->connect(myDevice))
+    return false;
+
+  BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
+  if (pRemoteService == nullptr)
+  {
+    pRemoteService = pClient->getService(fallbackServiceUUID);
+    if (pRemoteService == nullptr)
+    {
+      pClient->disconnect();
+      return false;
+    }
+  }
+
+  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
+  if (pRemoteCharacteristic == nullptr)
+  {
+    pRemoteCharacteristic = pRemoteService->getCharacteristic(fallbackCharUUID);
+    if (pRemoteCharacteristic == nullptr)
+    {
+      pClient->disconnect();
+      return false;
+    }
+  }
+
+  if (pRemoteCharacteristic->canNotify())
+    pRemoteCharacteristic->registerForNotify(notifyCallback);
+
+  bleStatusStr = "Init ELM327...";
+  elmInitStep = 0;
+  elmBuffer = "";
+  elmResponseReady = false;
+  return true;
+}
+
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
+{
+  void onResult(BLEAdvertisedDevice advertisedDevice)
+  {
+    String name = advertisedDevice.getName().c_str();
+    name.toUpperCase();
+    if (name.indexOf("OBD") != -1 || name.indexOf("LINK") != -1 || name.indexOf("BLE") != -1 || name.indexOf("IOS") != -1)
+    {
+      BLEDevice::getScan()->stop();
+      myDevice = new BLEAdvertisedDevice(advertisedDevice);
+      doConnect = true;
+      doScan = false;
+    }
+  }
+};
+
+void sendELMCommand(String cmd)
+{
+  cmd += "\r";
+  if (connected && pRemoteCharacteristic != nullptr)
+  {
+    pRemoteCharacteristic->writeValue(cmd.c_str(), cmd.length());
+    lastElmRequest = millis();
+    elmBuffer = "";
+    elmResponseReady = false;
+  }
+}
+
+void parseOBDResponse(String response, uint8_t pid)
+{
+  String searchStr = "41";
+  if (pid < 0x10)
+    searchStr += "0";
+  searchStr += String(pid, HEX);
+  searchStr.toUpperCase();
+  response.toUpperCase();
+
+  int idx = response.indexOf(searchStr);
+  if (idx != -1 && response.length() >= idx + 6)
+  {
+    String byteAStr = response.substring(idx + 4, idx + 6);
+    long A = strtol(byteAStr.c_str(), NULL, 16);
+    long B = 0;
+
+    if (response.length() >= idx + 8)
+    {
+      String byteBStr = response.substring(idx + 6, idx + 8);
+      B = strtol(byteBStr.c_str(), NULL, 16);
+    }
+
+    switch (pid)
+    {
+    case 0x04:
+      engineLoad = (A * 100.0) / 255.0;
+      dashLoad = engineLoad;
+      break;
+    case 0x05:
+      coolantTemp = A - 40;
+      dashCoolant = coolantTemp;
+      break;
+    case 0x0B:
+      mafPressure = A; // kPa
+      turboPressureState = (A - 100.0) * 0.01;
+      if (turboPressureState < 0)
+        turboPressureState = 0;
+      dashBoost = turboPressureState;
+      break;
+    case 0x0C:
+      engineRPM = ((A * 256.0) + B) / 4.0;
+      dashRPM = engineRPM;
+      break;
+    case 0x0D:
+      currentSpeed = A;
+      break;
+    case 0x0F:
+      intakeTemp = A - 40;
+      dashIAT = intakeTemp;
+      break;
+    case 0x10:
+      mafPressure = ((A * 256.0) + B) / 100.0;
+      break;
+    }
+  }
+}
+
+// Machine d'état Asynchrone Ultra Rapide
+void processBLE()
+{
+  if (doConnect == true)
+  {
+    if (connectToServer())
+      bleStatusStr = "Init ELM...";
+    else
+      bleStatusStr = "Conn Fail";
+    doConnect = false;
+  }
+
+  if (connected)
+  {
+    bool triggerNextRequest = false;
+
+    if (elmResponseReady)
+    {
+      if (elmInitStep < 5)
+      {
+        elmInitStep++;
+      }
+      else
+      {
+        parseOBDResponse(elmBuffer, currentExpectedPID);
+      }
+      elmBuffer = "";
+      elmResponseReady = false;
+      triggerNextRequest = true; // On n'attend pas, on tire la requête suivante !
+    }
+
+    // Timeout de sécurité (si l'ELM rate un caractère)
+    if (!elmResponseReady && (millis() - lastElmRequest > 250))
+    {
+      triggerNextRequest = true;
+    }
+
+    if (triggerNextRequest)
+    {
+      if (elmInitStep == 0)
+        sendELMCommand("ATZ");
+      else if (elmInitStep == 1)
+        sendELMCommand("ATE0");
+      else if (elmInitStep == 2)
+        sendELMCommand("ATL0");
+      else if (elmInitStep == 3)
+        sendELMCommand("ATS0");
+      else if (elmInitStep == 4)
+        sendELMCommand("ATSP0");
+      else
+      {
+        currentExpectedPID = OBD_PIDS[currentPidIndex];
+        String cmd = "01";
+        if (currentExpectedPID < 0x10)
+          cmd += "0";
+        cmd += String(currentExpectedPID, HEX);
+        sendELMCommand(cmd);
+
+        currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
+      }
+    }
+  }
+  else if (doScan)
+  {
+    BLEDevice::getScan()->start(2, false);
+  }
+}
+// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
-
-void fadeInScreen()
-{
-  u8g2.setPowerSave(0);
-  for (int i = 0; i <= OLED_BRIGHTNESS; i += 5)
-  {
-    u8g2.setContrast(i);
-    delay(25);
-  }
-  u8g2.setContrast(OLED_BRIGHTNESS);
-}
-
-void goToSleep()
-{
-  Serial.println("Timeout atteint. Mise en veille profonde...");
-  for (int i = OLED_BRIGHTNESS; i >= 0; i -= 5)
-  {
-    u8g2.setContrast(i);
-    delay(15);
-  }
-  u8g2.setPowerSave(1);
-  u8g2.setContrast(0);
-
-  twai_stop();
-  twai_driver_uninstall();
-
-  pinMode(CAN_RX_PIN, INPUT_PULLUP);
-  esp_deep_sleep_enable_gpio_wakeup(1ULL << CAN_RX_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
-  esp_deep_sleep_start();
-}
 
 void drawStringCenter(int y, String text)
 {
@@ -235,7 +449,6 @@ String generateWebPage()
 
   int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
   html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
-  html.replace("%SLEEP_TIMEOUT%", String(SLEEP_TIMEOUT_SEC));
   return html;
 }
 
@@ -252,7 +465,6 @@ void saveValues()
   cfg.tick_line_gauge = TICK_LINE_GAUGE;
   cfg.target_speed = TARGET_SPEED;
   cfg.brightness = OLED_BRIGHTNESS;
-  cfg.sleep_timeout_sec = SLEEP_TIMEOUT_SEC;
   EEPROM.put(0, cfg);
   EEPROM.commit();
 }
@@ -271,7 +483,6 @@ void loadValues()
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
   OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
-  SLEEP_TIMEOUT_SEC = (cfg.sleep_timeout_sec >= 10 && cfg.sleep_timeout_sec <= 3600) ? cfg.sleep_timeout_sec : 60;
 }
 
 void restart_ESP()
@@ -340,7 +551,7 @@ void buildMenu()
   menuText[menuSize] = "Brightness";
   menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
 
-  if (screenIndex != 0 && screenIndex != 6 && screenIndex != 7 && screenIndex != 8)
+  if (screenIndex != 0 && screenIndex != 6 && screenIndex != 7 && screenIndex != 8 && screenIndex != 10)
   {
     String s = "Type: Text";
     if ((screenIndex == 1 && BOOST_SCREEN) ||
@@ -447,7 +658,7 @@ struct AreaChartData
   bool initialized;
 };
 AreaChartData turboHistory = {{0}, 0, false};
-AreaChartData rpmHistory = {{0}, 0, false}; // Remplacé loadHistory par rpmHistory
+AreaChartData loadHistory = {{0}, 0, false};
 AreaChartData batteryHistory = {{0}, 0, false};
 AreaChartData coolantHistory = {{0}, 0, false};
 AreaChartData iatHistory = {{0}, 0, false};
@@ -512,158 +723,12 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
-// ==== CAN OBD2 Functions ====
-void requestOBDPID(uint8_t pid)
-{
-  twai_message_t message = {0};
-
-  // RETOUR À LA NORMALE : On diffuse à tous les calculateurs via 0x7DF
-  message.identifier = 0x7DF;
-  message.extd = 0;
-  message.rtr = 0;
-  message.data_length_code = 8;
-
-  message.data[0] = 0x02; // 2 octets de données utiles
-  message.data[1] = 0x01; // Mode 01
-  message.data[2] = pid;  // Le capteur demandé
-
-  // Remplissage strict ELM327 avec des 0x00, indispensable pour le BSI Peugeot
-  for (int i = 3; i < 8; i++)
-  {
-    message.data[i] = 0x00;
-  }
-
-  twai_transmit(&message, pdMS_TO_TICKS(10));
-}
-
-void clearDTC()
-{
-  twai_message_t message = {0};
-  message.identifier = 0x7DF;
-  message.extd = 0;
-  message.rtr = 0;
-  message.data_length_code = 8;
-  message.data[0] = 0x01;
-  message.data[1] = 0x04;
-  for (int i = 2; i < 8; i++)
-    message.data[i] = 0x00;
-
-  twai_transmit(&message, pdMS_TO_TICKS(10));
-}
-
-void fetchOBDData()
-{
-  twai_status_info_t status_info;
-  twai_get_status_info(&status_info);
-
-  if (status_info.state == TWAI_STATE_BUS_OFF)
-  {
-    twai_initiate_recovery();
-    return;
-  }
-  if (status_info.state == TWAI_STATE_STOPPED)
-  {
-    twai_start();
-    return;
-  }
-  if (status_info.state != TWAI_STATE_RUNNING)
-    return;
-
-  // On repasse à 200ms pour être sûr que le BSI a le temps de traiter (comme l'ELM)
-  if (millis() - lastCanRequest > 200)
-  {
-    requestOBDPID(OBD_PIDS[currentPidIndex]);
-    currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
-    lastCanRequest = millis();
-  }
-
-  twai_message_t message;
-  while (twai_receive(&message, 0) == ESP_OK)
-  {
-    lastActivityTime = millis();
-
-    lastRawId = message.identifier;
-    lastRawDlc = message.data_length_code;
-    for (int i = 0; i < 8; i++)
-    {
-      lastRawData[i] = (i < lastRawDlc) ? message.data[i] : 0;
-    }
-
-    // Le BSI ou l'ECU va répondre entre 0x7E8 et 0x7EF
-    if (message.identifier >= 0x7E8 && message.identifier <= 0x7EF)
-    {
-      if (message.data[1] == 0x41)
-      {
-        uint8_t pid = message.data[2];
-        float A = message.data[3];
-        float B = message.data[4];
-
-        switch (pid)
-        {
-        case 0x01:
-          dtcCountFound = message.data[3] & 0x7F;
-          break;
-        case 0x04: // Load
-          engineLoad = (A * 100.0) / 255.0;
-          break;
-        case 0x05: // Coolant
-          coolantTemp = A - 40;
-          dashCoolant = coolantTemp;
-          break;
-        case 0x0B:         // MAP (Manifold Absolute Pressure) = Pression Admission/Turbo
-          mafPressure = A; // kPa (on l'affiche en kPa)
-          turboPressureState = (A - 100.0) * 0.01;
-          if (turboPressureState < 0)
-            turboPressureState = 0;
-          dashBoost = turboPressureState;
-          break;
-        case 0x0C: // NOUVEAU: RPM (Régime Moteur)
-          engineRPM = ((A * 256.0) + B) / 4.0;
-          dashRPM = engineRPM;
-          break;
-        case 0x0D: // Vitesse
-          currentSpeed = A;
-          break;
-        case 0x0F: // IAT (Température d'admission)
-          intakeTemp = A - 40;
-          dashIAT = intakeTemp;
-          break;
-        case 0x10: // MAF (Débitmètre d'air)
-          mafPressure = ((A * 256.0) + B) / 100.0;
-          break;
-        }
-      }
-    }
-
-    // Gestion du Timer 0-X km/h
-    if (screenIndex == 8)
-    {
-      if (currentSpeed <= 0)
-      {
-        timerReady = true;
-        timerRunning = false;
-      }
-      else if (timerReady && !timerRunning && currentSpeed > 0)
-      {
-        timerRunning = true;
-        speedTimerStart = millis();
-      }
-      else if (timerRunning && currentSpeed >= TARGET_SPEED)
-      {
-        timerRunning = false;
-        timerReady = false;
-        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
-      }
-    }
-  }
-}
-
 void draw_GaugeScreen(uint8_t index)
 {
   switch (index)
   {
   case 0:
-    draw_InfoText("MAP / MAF Air", mafPressure, "kPa/gs");
+    draw_InfoText("Pression MAP/Air", mafPressure, "kPa");
     break;
   case 1:
     if (BOOST_SCREEN == 0)
@@ -679,9 +744,9 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 3:
     if (ENGLOAD_SCREEN == 0)
-      draw_InfoText("Regime Moteur", engineRPM, "tr/m");
+      draw_InfoText("Charge Moteur", engineLoad, "%");
     else
-      draw_AreaChartWithHistory(rpmHistory, engineRPM, 0, 5000, "Regime", "RPM");
+      draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge", "%");
     break;
   case 4:
     if (BATTERY_SCREEN == 0)
@@ -698,18 +763,9 @@ void draw_GaugeScreen(uint8_t index)
   case 6:
   {
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(12, "Defauts: " + String(dtcCountFound));
-    if (dtcCountFound == 0)
-    {
-      u8g2.setFont(u8g2_font_helvR12_tr);
-      drawStringCenter(36, "Aucun defaut");
-    }
-    else
-    {
-      u8g2.setFont(u8g2_font_helvR10_tr);
-      drawStringCenter(36, "Lecture texte CAN");
-      drawStringCenter(46, "Non dispo (ISO-TP)");
-    }
+    drawStringCenter(12, "Lecture DTC");
+    u8g2.setFont(u8g2_font_helvR12_tr);
+    drawStringCenter(36, "Non dispo en BLE");
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
   }
@@ -722,7 +778,6 @@ void draw_GaugeScreen(uint8_t index)
     drawStringLeft(64, 22, String(dashIAT, 1) + " C");
     drawStringLeft(0, 32, "COOL:");
     drawStringLeft(0, 42, String(dashCoolant, 1) + " C");
-    // Changement ici: Affichage RPM au lieu de LOAD sur le tableau de bord
     drawStringLeft(64, 32, "RPM:");
     drawStringLeft(64, 42, String((int)dashRPM) + " tr");
     draw_BottomText(version_string);
@@ -747,64 +802,20 @@ void draw_GaugeScreen(uint8_t index)
   case 10:
   {
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(10, "RAW CAN DATA");
+    drawStringCenter(12, "BLE ELM327 STATUS");
+    u8g2.drawLine(0, 16, 128, 16);
 
-    twai_status_info_t status;
-    twai_get_status_info(&status);
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringCenter(30, bleStatusStr);
 
-    if (status.state == TWAI_STATE_BUS_OFF)
+    if (connected)
     {
-      u8g2.setFont(u8g2_font_helvR08_tr);
-      drawStringCenter(26, "ETAT: BUS-OFF (Crash)");
-      drawStringCenter(38, "Reconnexion...");
-      drawStringCenter(48, "Inverser TX/RX !");
-    }
-    else if (status.state == TWAI_STATE_STOPPED)
-    {
-      u8g2.setFont(u8g2_font_helvR08_tr);
-      drawStringCenter(36, "ETAT: ARRETE");
-    }
-    else
-    {
-      u8g2.setFont(u8g2_font_helvR08_tr);
-      String errStr = "TX Err: " + String(status.tx_error_counter) + " | RX Err: " + String(status.rx_error_counter);
-      drawStringCenter(18, errStr);
-
-      if (lastRawId == 0)
-      {
-        drawStringCenter(36, "En attente de donnees...");
-      }
+      if (elmInitStep < 5)
+        drawStringCenter(42, "Step: " + String(elmInitStep) + "/5");
       else
-      {
-        String idStr = "ID: 0x" + String(lastRawId, HEX);
-        idStr.toUpperCase();
-        drawStringLeft(0, 30, idStr + "   DLC: " + String(lastRawDlc));
-
-        String d1 = "", d2 = "";
-        for (int i = 0; i < 4; i++)
-        {
-          if (i < lastRawDlc)
-          {
-            if (lastRawData[i] < 0x10)
-              d1 += "0";
-            d1 += String(lastRawData[i], HEX) + " ";
-          }
-        }
-        for (int i = 4; i < 8; i++)
-        {
-          if (i < lastRawDlc)
-          {
-            if (lastRawData[i] < 0x10)
-              d2 += "0";
-            d2 += String(lastRawData[i], HEX) + " ";
-          }
-        }
-        d1.toUpperCase();
-        d2.toUpperCase();
-        drawStringCenter(40, d1);
-        drawStringCenter(50, d2);
-      }
+        drawStringCenter(42, "Polling Data OK");
     }
+
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
   }
@@ -837,7 +848,6 @@ void startServer()
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
-      if (server.hasArg("sleep_timeout")) SLEEP_TIMEOUT_SEC = server.arg("sleep_timeout").toInt();
 
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
       setOledBrightness(OLED_BRIGHTNESS);
@@ -866,7 +876,6 @@ void startServer()
   ElegantOTA.onStart([]()
                      {
     ota_updating = true; 
-    lastActivityTime = millis(); 
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(35, "OTA UPDATING");
@@ -880,49 +889,28 @@ void setup()
 {
   Serial.begin(115200);
 
-  int usbTimeout = 40;
-  while (!Serial && usbTimeout > 0)
-  {
-    delay(100);
-    usbTimeout--;
-  }
-
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DOWN, INPUT_PULLUP);
   pinMode(BTN_OK, INPUT_PULLUP);
   pinMode(BTN_MENU, INPUT_PULLUP);
 
   delay(500);
-  if (digitalRead(BTN_OK) == LOW)
-    currentState = STATE_CONFIG;
+  if (digitalRead(BTN_MENU) == LOW)
+    currentState = STATE_CONFIG; // Appui MENU au boot pour config WiFi
 
   u8g2.begin();
   u8g2.setBusClock(400000);
 
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
-
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  bool wokeUpFromSleep = (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO);
-
-  if (wokeUpFromSleep)
-  {
-    u8g2.setContrast(0);
-  }
-  else
-  {
-    setOledBrightness(OLED_BRIGHTNESS);
-  }
+  setOledBrightness(OLED_BRIGHTNESS);
 
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-  if (!wokeUpFromSleep)
-    draw_BottomText(version_string);
+  draw_BottomText(version_string);
   u8g2.sendBuffer();
 
-  if (wokeUpFromSleep)
-    fadeInScreen();
-  delay(2000);
+  delay(1500);
 
   if (!LittleFS.begin())
   {
@@ -931,33 +919,17 @@ void setup()
     restart_ESP();
   }
 
+  startServer();
+
+  // Initialisation du BLE asynchrone ultra rapide
   if (currentState != STATE_CONFIG)
   {
-    displayInfo("CAN Init...");
-    pinMode(CAN_RX_PIN, INPUT_PULLUP);
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
-    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
-    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
-    {
-      if (twai_start() != ESP_OK)
-      {
-        displayInfo("CAN Start Fail");
-        delay(2000);
-        restart_ESP();
-      }
-    }
-    else
-    {
-      displayInfo("CAN Install Fail");
-      delay(2000);
-      restart_ESP();
-    }
+    BLEDevice::init("CANuSEE");
+    BLEScan *pBLEScan = BLEDevice::getScan();
+    pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+    pBLEScan->setActiveScan(true);
+    doScan = true;
   }
-
-  startServer();
-  lastActivityTime = millis();
 }
 
 void loop()
@@ -966,29 +938,21 @@ void loop()
   ElegantOTA.loop();
   dnsServer.processNextRequest();
 
-  if (!ota_updating && currentState != STATE_CONFIG)
-  {
-    if (millis() - lastActivityTime > (SLEEP_TIMEOUT_SEC * 1000UL))
-      goToSleep();
-  }
-
   if (ota_updating)
   {
-    lastActivityTime = millis();
     yield();
     return;
   }
 
+  // Exécute le moteur BLE ultra-rapide
   if (currentState == STATE_GAUGES)
-    fetchOBDData();
+    processBLE();
 
+  // ==== Lecture des 4 boutons ====
   bool upPressed = btnUp.pressed();
   bool downPressed = btnDown.pressed();
   bool okPressed = btnOk.pressed();
   bool menuPressed = btnMenu.pressed();
-
-  if (upPressed || downPressed || okPressed || menuPressed)
-    lastActivityTime = millis();
 
   if (menuPressed)
   {
@@ -1092,8 +1056,7 @@ void loop()
         currentState = STATE_EDIT_BRIGHTNESS;
       else if (action == ACT_RESET_DTC)
       {
-        displayInfo("Clearing DTC...");
-        clearDTC();
+        displayInfo("Non dispo en BLE");
         delay(1000);
         currentState = STATE_GAUGES;
       }
