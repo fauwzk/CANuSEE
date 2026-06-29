@@ -20,8 +20,8 @@
 // ==== Pins Configuration (4 Boutons) ====
 #define BTN_UP 0
 #define BTN_DOWN 1
-#define BTN_OK 6
-#define BTN_MENU 3
+#define BTN_OK 3
+#define BTN_MENU 6
 
 // ==== WiFi Config ====
 const char *ssid = "CANuSEE_Config";
