@@ -11,9 +11,7 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
-// test
-
-// ==== BLE Libraries (Remplacent ELMduino pour la vitesse) ====
+// ==== BLE Libraries ====
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
@@ -50,16 +48,9 @@ struct Settings
 #define EEPROM_SIZE sizeof(Settings)
 Settings cfg;
 
-int BOOST_SCREEN = 0;
-int ENGLOAD_SCREEN = 0;
-int BATTERY_SCREEN = 0;
-int COOLANT_SCREEN = 0;
-int IAT_SCREEN = 0;
-int TICK_LINE_GAUGE = 2;
-int TARGET_SPEED = 100;
-int OLED_BRIGHTNESS = 255;
+int BOOST_SCREEN = 0, ENGLOAD_SCREEN = 0, BATTERY_SCREEN = 0, COOLANT_SCREEN = 0, IAT_SCREEN = 0;
+int TICK_LINE_GAUGE = 2, TARGET_SPEED = 100, OLED_BRIGHTNESS = 255;
 
-// ==== State Machine ====
 enum AppState
 {
   STATE_GAUGES,
@@ -71,40 +62,29 @@ enum AppState
   STATE_CONFIG
 };
 AppState currentState = STATE_GAUGES;
-
 bool ota_updating = false;
-
 String version_string = "CANuSEE " FW_VERSION;
 
 // ==== OLED (U8g2) ====
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
-
-// ==== Coordinates & State ====
 const int centerX = 64;
-const int screenNumbers = 11; // Ajout de l'écran BLE Status
+const int screenNumbers = 11;
 uint8_t screenIndex = 0;
-float TURBO_MIN_BAR = -0.7;
-float TURBO_MAX_BAR = 1.5;
+float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
-float atmoPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
+float mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, batteryVoltage = 0.0, turboPressureState = 0.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
-
 int dtcCountFound = 0;
 
-// ==== Timer State ====
-bool timerRunning = false;
-bool timerReady = false;
+bool timerRunning = false, timerReady = false;
 unsigned long speedTimerStart = 0;
-float lastTimerValue = 0.0;
-float currentSpeed = 0.0;
+float lastTimerValue = 0.0, currentSpeed = 0.0;
 
-// ==== Dynamic Menu Variables ====
 #define MAX_MENU_ITEMS 24
 String menuText[MAX_MENU_ITEMS];
 int menuAction[MAX_MENU_ITEMS];
-int menuSize = 0;
-int menuCursor = 0;
+int menuSize = 0, menuCursor = 0;
 
 #define ACT_CLOSE 0
 #define ACT_TOGGLE_STYLE 1
@@ -115,24 +95,20 @@ int menuCursor = 0;
 #define ACT_EDIT_BRIGHTNESS 6
 #define ACT_ENTER_CONFIG 7
 #define ACT_GO_SCREEN_0 10
+const char *screenNames[] = {"MAP/Air", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "BLE"};
 
-const char *screenNames[] = {"MAF", "Boost", "IAT", "Load", "Battery", "Coolant", "DTC", "Dash", "Timer", "Speed", "BLE"};
-
-// ==== Struct 4 Boutons ====
 struct Button
 {
   uint8_t pin;
   bool state;
   bool lastState;
   unsigned long lastDebounceTime;
-
   bool pressed()
   {
     bool reading = (digitalRead(pin) == LOW);
     if (reading != lastState)
       lastDebounceTime = millis();
     lastState = reading;
-
     if ((millis() - lastDebounceTime) > 50)
     {
       if (reading != state)
@@ -150,18 +126,16 @@ Button btnDown = {BTN_DOWN, false, false, 0};
 Button btnOk = {BTN_OK, false, false, 0};
 Button btnMenu = {BTN_MENU, false, false, 0};
 
-// ==========================================
-// ==== BLE & ELM327 CUSTOM FAST ENGINE  ====
-// ==========================================
-static BLEUUID serviceUUID("0000ffe0-0000-1000-8000-00805f9b34fb"); // ELM327 BLE Standard
-static BLEUUID charUUID("0000ffe1-0000-1000-8000-00805f9b34fb");
-static BLEUUID fallbackServiceUUID("0000fff0-0000-1000-8000-00805f9b34fb"); // V-Link fallback
-static BLEUUID fallbackCharUUID("0000fff1-0000-1000-8000-00805f9b34fb");
+// =========================================================
+// ==== MOTEUR BLE ULTRA-RAPIDE (Spécifique OBDBLE FFF0) ====
+// =========================================================
+static BLEUUID serviceUUID("0000fff0-0000-1000-8000-00805f9b34fb");
 
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
-static BLERemoteCharacteristic *pRemoteCharacteristic;
+static BLERemoteCharacteristic *pTxCharacteristic = nullptr; // Pour envoyer à l'ELM
+static BLERemoteCharacteristic *pRxCharacteristic = nullptr; // Pour lire l'ELM
 static BLEAdvertisedDevice *myDevice;
 
 String bleStatusStr = "Scanning...";
@@ -171,20 +145,22 @@ bool elmResponseReady = false;
 int elmInitStep = 0;
 unsigned long lastElmRequest = 0;
 uint8_t currentExpectedPID = 0;
+uint32_t packetsReceived = 0;
 
-// Ordre de priorité des PIDs (Optimisé pour la vitesse des jauges dynamiques)
 const uint8_t OBD_PIDS[] = {0x0B, 0x0C, 0x0D, 0x04, 0x05, 0x0F, 0x10};
 const uint8_t NUM_PIDS = sizeof(OBD_PIDS) / sizeof(OBD_PIDS[0]);
 uint8_t currentPidIndex = 0;
 
+// Callback de réception des données (RX)
 static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
+  packetsReceived++;
   for (int i = 0; i < length; i++)
   {
     char c = (char)pData[i];
     if (c == '>')
     {
-      elmResponseReady = true; // Fin du message reçue, déclenchement immédiat !
+      elmResponseReady = true; // Fin du message : on lance le traitement !
     }
     else if (c != '\r' && c != '\n' && c != ' ')
     {
@@ -221,33 +197,51 @@ bool connectToServer()
   BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
   if (pRemoteService == nullptr)
   {
-    pRemoteService = pClient->getService(fallbackServiceUUID);
-    if (pRemoteService == nullptr)
-    {
-      pClient->disconnect();
-      return false;
-    }
+    pClient->disconnect();
+    return false;
   }
 
-  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
-  if (pRemoteCharacteristic == nullptr)
+  // --- DÉCOUVERTE DYNAMIQUE TX/RX ---
+  // Au lieu de deviner l'UUID, on parcourt toutes les caractéristiques du service FFF0
+  std::map<std::string, BLERemoteCharacteristic *> *pChars = pRemoteService->getCharacteristics();
+  for (auto const &pair : *pChars)
   {
-    pRemoteCharacteristic = pRemoteService->getCharacteristic(fallbackCharUUID);
-    if (pRemoteCharacteristic == nullptr)
+    BLERemoteCharacteristic *pChar = pair.second;
+
+    // Si la caractéristique permet d'écrire, on la sauvegarde comme TX
+    if (pChar->canWrite() || pChar->canWriteNoResponse())
     {
-      pClient->disconnect();
-      return false;
+      pTxCharacteristic = pChar;
+    }
+
+    // Si la caractéristique permet de notifier, on la sauvegarde comme RX
+    if (pChar->canNotify())
+    {
+      pRxCharacteristic = pChar;
+      pRxCharacteristic->registerForNotify(notifyCallback);
+
+      // Activation Vitale des Notifications (CCCD 0x2902)
+      uint8_t enableValue[] = {0x01, 0x00};
+      BLERemoteDescriptor *pDesc = pChar->getDescriptor(BLEUUID((uint16_t)0x2902));
+      if (pDesc != nullptr)
+      {
+        pDesc->writeValue(enableValue, 2, true);
+      }
     }
   }
 
-  if (pRemoteCharacteristic->canNotify())
-    pRemoteCharacteristic->registerForNotify(notifyCallback);
+  if (pTxCharacteristic != nullptr && pRxCharacteristic != nullptr)
+  {
+    bleStatusStr = "Init ELM327...";
+    elmInitStep = 0;
+    elmBuffer = "";
+    elmResponseReady = false;
+    return true;
+  }
 
-  bleStatusStr = "Init ELM327...";
-  elmInitStep = 0;
-  elmBuffer = "";
-  elmResponseReady = false;
-  return true;
+  bleStatusStr = "RX/TX Not Found";
+  pClient->disconnect();
+  return false;
 }
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
@@ -256,7 +250,8 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
   {
     String name = advertisedDevice.getName().c_str();
     name.toUpperCase();
-    if (name.indexOf("OBD") != -1 || name.indexOf("LINK") != -1 || name.indexOf("BLE") != -1 || name.indexOf("IOS") != -1)
+    // On cible exactement "OBDBLE" tel que vu sur ta capture d'écran
+    if (name == "OBDBLE" || name.indexOf("OBD") != -1)
     {
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
@@ -269,9 +264,9 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
 void sendELMCommand(String cmd)
 {
   cmd += "\r";
-  if (connected && pRemoteCharacteristic != nullptr)
+  if (connected && pTxCharacteristic != nullptr)
   {
-    pRemoteCharacteristic->writeValue(cmd.c_str(), cmd.length());
+    pTxCharacteristic->writeValue(cmd.c_str(), cmd.length());
     lastElmRequest = millis();
     elmBuffer = "";
     elmResponseReady = false;
@@ -311,7 +306,7 @@ void parseOBDResponse(String response, uint8_t pid)
       dashCoolant = coolantTemp;
       break;
     case 0x0B:
-      mafPressure = A; // kPa
+      mafPressure = A;
       turboPressureState = (A - 100.0) * 0.01;
       if (turboPressureState < 0)
         turboPressureState = 0;
@@ -335,14 +330,11 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
-// Machine d'état Asynchrone Ultra Rapide
 void processBLE()
 {
   if (doConnect == true)
   {
-    if (connectToServer())
-      bleStatusStr = "Init ELM...";
-    else
+    if (!connectToServer())
       bleStatusStr = "Conn Fail";
     doConnect = false;
   }
@@ -350,6 +342,12 @@ void processBLE()
   if (connected)
   {
     bool triggerNextRequest = false;
+
+    // Timeout de sécurité : force la relance si l'adaptateur n'a pas répondu
+    if (!elmResponseReady && (millis() - lastElmRequest > 500))
+    {
+      triggerNextRequest = true;
+    }
 
     if (elmResponseReady)
     {
@@ -363,29 +361,24 @@ void processBLE()
       }
       elmBuffer = "";
       elmResponseReady = false;
-      triggerNextRequest = true; // On n'attend pas, on tire la requête suivante !
-    }
-
-    // Timeout de sécurité (si l'ELM rate un caractère)
-    if (!elmResponseReady && (millis() - lastElmRequest > 250))
-    {
-      triggerNextRequest = true;
+      triggerNextRequest = true; // On tire la prochaine requête instantanément
     }
 
     if (triggerNextRequest)
     {
       if (elmInitStep == 0)
-        sendELMCommand("ATZ");
+        sendELMCommand("ATZ"); // Reset
       else if (elmInitStep == 1)
-        sendELMCommand("ATE0");
+        sendELMCommand("ATE0"); // Desactive l'écho local (ultra rapide)
       else if (elmInitStep == 2)
-        sendELMCommand("ATL0");
+        sendELMCommand("ATL0"); // Desactive les retours chariots
       else if (elmInitStep == 3)
-        sendELMCommand("ATS0");
+        sendELMCommand("ATS0"); // Desactive les espaces
       else if (elmInitStep == 4)
-        sendELMCommand("ATSP0");
+        sendELMCommand("ATSP0"); // Auto-détection du protocole voiture
       else
       {
+        // Boucle rapide d'interrogation PIDs
         currentExpectedPID = OBD_PIDS[currentPidIndex];
         String cmd = "01";
         if (currentExpectedPID < 0x10)
@@ -405,7 +398,6 @@ void processBLE()
 // ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
-
 void drawStringCenter(int y, String text)
 {
   int w = u8g2.getStrWidth(text.c_str());
@@ -431,7 +423,6 @@ String generateWebPage()
     return "<html><body><h3>File not found</h3></body></html>";
   String html = file.readString();
   file.close();
-
   html.reserve(html.length() + 1024);
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
@@ -448,9 +439,7 @@ String generateWebPage()
   html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
   html.replace("%TICKS%", String(TICK_LINE_GAUGE));
   html.replace("%MAX_SPEED%", String(TARGET_SPEED));
-
-  int brightnessPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
-  html.replace("%BRIGHTNESS_PCT%", String(brightnessPct));
+  html.replace("%BRIGHTNESS_PCT%", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)));
   return html;
 }
 
@@ -503,16 +492,13 @@ void draw_BottomText(String text)
   u8g2.setDrawColor(0);
   u8g2.drawBox(0, 48, 128, 16);
   u8g2.setDrawColor(1);
-
   if (text == version_string)
   {
     drawStringCenter(60, "CANuSEE");
     drawStringRight(126, 60, String(FW_VERSION));
   }
   else
-  {
     drawStringCenter(60, text);
-  }
 }
 
 void displayInfo(String msg)
@@ -546,21 +532,16 @@ void buildMenu()
   menuSize = 0;
   menuText[menuSize] = "Exit Menu";
   menuAction[menuSize++] = ACT_CLOSE;
-
   menuText[menuSize] = "Mode Config";
   menuAction[menuSize++] = ACT_ENTER_CONFIG;
-
   menuText[menuSize] = "Brightness";
   menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
 
   if (screenIndex != 0 && screenIndex != 6 && screenIndex != 7 && screenIndex != 8 && screenIndex != 10)
   {
     String s = "Type: Text";
-    if ((screenIndex == 1 && BOOST_SCREEN) ||
-        (screenIndex == 2 && IAT_SCREEN) ||
-        (screenIndex == 3 && ENGLOAD_SCREEN) ||
-        (screenIndex == 4 && BATTERY_SCREEN) ||
-        (screenIndex == 5 && COOLANT_SCREEN))
+    if ((screenIndex == 1 && BOOST_SCREEN) || (screenIndex == 2 && IAT_SCREEN) || (screenIndex == 3 && ENGLOAD_SCREEN) ||
+        (screenIndex == 4 && BATTERY_SCREEN) || (screenIndex == 5 && COOLANT_SCREEN))
     {
       s = "Type: Gauge";
     }
@@ -575,19 +556,16 @@ void buildMenu()
     menuText[menuSize] = "Max: " + String(TURBO_MAX_BAR, 1);
     menuAction[menuSize++] = ACT_EDIT_MAX;
   }
-
   if (screenIndex == 6)
   {
     menuText[menuSize] = "Reset DTCs";
     menuAction[menuSize++] = ACT_RESET_DTC;
   }
-
   if (screenIndex == 8)
   {
     menuText[menuSize] = "Target: " + String(TARGET_SPEED);
     menuAction[menuSize++] = ACT_EDIT_SPEED;
   }
-
   for (int i = 0; i < screenNumbers; i++)
   {
     menuText[menuSize] = "-> " + String(screenNames[i]);
@@ -601,21 +579,16 @@ void drawMenuScreen()
   u8g2.setFont(u8g2_font_helvR10_tr);
   drawStringCenter(12, "MENU");
   u8g2.drawLine(0, 14, 128, 14);
-
   u8g2.setFont(u8g2_font_helvR08_tr);
+
   int visibleItems = 3;
-  int startIdx = 0;
-  if (menuCursor >= visibleItems)
-  {
-    startIdx = menuCursor - visibleItems + 1;
-  }
+  int startIdx = (menuCursor >= visibleItems) ? menuCursor - visibleItems + 1 : 0;
 
   for (int i = 0; i < visibleItems; i++)
   {
     int itemIdx = startIdx + i;
     if (itemIdx >= menuSize)
       break;
-
     int yPos = 24 + (i * 11);
     if (itemIdx == menuCursor)
     {
@@ -625,7 +598,6 @@ void drawMenuScreen()
     }
     else
       u8g2.setDrawColor(1);
-
     drawStringCenter(yPos, menuText[itemIdx]);
     u8g2.setDrawColor(1);
   }
@@ -690,12 +662,7 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   if (history.currentIndex == 0)
     history.initialized = true;
 
-  int chartX = 32;
-  int chartY = 12;
-  int chartWidth = AREA_CHART_HISTORY;
-  int chartHeight = 32;
-  int baseY = chartY + chartHeight;
-
+  int chartX = 32, chartY = 12, chartWidth = AREA_CHART_HISTORY, chartHeight = 32, baseY = chartY + chartHeight;
   u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(10, label);
@@ -712,11 +679,7 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
-  int maxLabelY = chartY + 8;
-  int minLabelY = baseY;
-  int valCenterY = chartY + (chartHeight / 2) + 4;
-  int alignBorderX = chartX - 2;
-
+  int maxLabelY = chartY + 8, minLabelY = baseY, valCenterY = chartY + (chartHeight / 2) + 4, alignBorderX = chartX - 2;
   drawStringRight(alignBorderX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
   drawStringRight(alignBorderX, minLabelY, alignSign(formatDecimal(minValue, 1)));
   drawStringRight(alignBorderX, valCenterY, alignSign(formatDecimal(newValue, 1)));
@@ -730,7 +693,7 @@ void draw_GaugeScreen(uint8_t index)
   switch (index)
   {
   case 0:
-    draw_InfoText("Pression MAP/Air", mafPressure, "kPa");
+    draw_InfoText("Pression MAF", mafPressure, "kPa");
     break;
   case 1:
     if (BOOST_SCREEN == 0)
@@ -763,15 +726,13 @@ void draw_GaugeScreen(uint8_t index)
       draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
     break;
   case 6:
-  {
     u8g2.setFont(u8g2_font_helvR10_tr);
     drawStringCenter(12, "Lecture DTC");
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(36, "Non dispo en BLE");
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
-  }
-  break;
+    break;
   case 7:
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringLeft(0, 12, "BOOST:");
@@ -803,22 +764,21 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 10:
   {
-    u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(12, "BLE ELM327 STATUS");
-    u8g2.drawLine(0, 16, 128, 16);
+    u8g2.setFont(u8g2_font_5x7_tr); // Plus petit pour afficher toutes les infos de diagnostic
+    drawStringCenter(8, "BLE OBDBLE STATUS");
+    u8g2.drawLine(0, 12, 128, 12);
 
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(30, bleStatusStr);
+    u8g2.setCursor(0, 22);
+    u8g2.print("Status: " + bleStatusStr);
+    u8g2.setCursor(0, 32);
+    u8g2.print("Packets RX: " + String(packetsReceived));
+    u8g2.setCursor(0, 42);
+    u8g2.print("Init Step: " + String(elmInitStep) + "/5");
 
-    if (connected)
-    {
-      if (elmInitStep < 5)
-        drawStringCenter(42, "Step: " + String(elmInitStep) + "/5");
-      else
-        drawStringCenter(42, "Polling Data OK");
-    }
+    u8g2.setCursor(0, 52);
+    u8g2.print("Buf: ");
+    u8g2.print(elmBuffer);
 
-    draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
   }
   break;
@@ -850,59 +810,35 @@ void startServer()
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("voltage_gauge_type")) BATTERY_SCREEN = server.arg("voltage_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
-
-      OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255);
-      setOledBrightness(OLED_BRIGHTNESS);
-      saveValues();
-      server.sendHeader("Location", "/");
-      server.send(303); });
+      OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255); setOledBrightness(OLED_BRIGHTNESS);
+      saveValues(); server.sendHeader("Location", "/"); server.send(303); });
   server.on("/api/state", HTTP_GET, []()
             {
-        String json = "{";
-        json += "\"screen\":" + String(screenIndex) + ",";
-        json += "\"maf\":" + String(mafPressure) + ",";
-        json += "\"boost\":" + String(turboPressureState) + ",";
-        json += "\"iat\":" + String(intakeTemp) + ",";
-        json += "\"load\":" + String(engineLoad) + ",";
-        json += "\"battery\":" + String(batteryVoltage) + ",";
-        json += "\"coolant\":" + String(coolantTemp) + ",";
-        json += "\"speed\":" + String(currentSpeed) + ",";
-        json += "\"boost_mode\":" + String(BOOST_SCREEN) + ",";
-        json += "\"min_boost\":" + String(TURBO_MIN_BAR) + ",";
-        json += "\"max_boost\":" + String(TURBO_MAX_BAR) + ",";
-        json += "\"brightness\":" + String(OLED_BRIGHTNESS);
-        json += "}";
-        server.send(200, "application/json", json); });
-
+      String json = "{\"screen\":" + String(screenIndex) + ",\"maf\":" + String(mafPressure) + ",\"boost\":" + String(turboPressureState) + 
+                    ",\"iat\":" + String(intakeTemp) + ",\"load\":" + String(engineLoad) + ",\"battery\":" + String(batteryVoltage) + 
+                    ",\"coolant\":" + String(coolantTemp) + ",\"speed\":" + String(currentSpeed) + ",\"boost_mode\":" + String(BOOST_SCREEN) + 
+                    ",\"min_boost\":" + String(TURBO_MIN_BAR) + ",\"max_boost\":" + String(TURBO_MAX_BAR) + ",\"brightness\":" + String(OLED_BRIGHTNESS) + "}";
+      server.send(200, "application/json", json); });
   ElegantOTA.begin(&server);
   ElegantOTA.onStart([]()
-                     {
-    ota_updating = true; 
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_helvR12_tr);
-    drawStringCenter(35, "OTA UPDATING");
-    draw_BottomText("Ne pas debrancher");
-    u8g2.sendBuffer(); });
-
+                     { ota_updating = true; u8g2.clearBuffer(); u8g2.setFont(u8g2_font_helvR12_tr); drawStringCenter(35, "OTA UPDATING"); draw_BottomText("Ne pas debrancher"); u8g2.sendBuffer(); });
   server.begin();
 }
 
 void setup()
 {
   Serial.begin(115200);
-
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DOWN, INPUT_PULLUP);
   pinMode(BTN_OK, INPUT_PULLUP);
   pinMode(BTN_MENU, INPUT_PULLUP);
-
   delay(500);
+
   if (digitalRead(BTN_MENU) == LOW)
-    currentState = STATE_CONFIG; // Appui MENU au boot pour config WiFi
+    currentState = STATE_CONFIG;
 
   u8g2.begin();
   u8g2.setBusClock(400000);
-
   EEPROM.begin(EEPROM_SIZE);
   loadValues();
   setOledBrightness(OLED_BRIGHTNESS);
@@ -911,7 +847,6 @@ void setup()
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText(version_string);
   u8g2.sendBuffer();
-
   delay(1500);
 
   if (!LittleFS.begin())
@@ -923,7 +858,6 @@ void setup()
 
   startServer();
 
-  // Initialisation du BLE asynchrone ultra rapide
   if (currentState != STATE_CONFIG)
   {
     BLEDevice::init("CANuSEE");
@@ -946,11 +880,9 @@ void loop()
     return;
   }
 
-  // Exécute le moteur BLE ultra-rapide
   if (currentState == STATE_GAUGES)
     processBLE();
 
-  // ==== Lecture des 4 boutons ====
   bool upPressed = btnUp.pressed();
   bool downPressed = btnDown.pressed();
   bool okPressed = btnOk.pressed();
@@ -965,12 +897,8 @@ void loop()
       buildMenu();
       currentState = STATE_MENU;
     }
-    else if (currentState == STATE_MENU || currentState == STATE_EDIT_MIN ||
-             currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED ||
-             currentState == STATE_EDIT_BRIGHTNESS)
-    {
+    else if (currentState == STATE_MENU || currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
       currentState = STATE_GAUGES;
-    }
   }
 
   if (upPressed || downPressed)
@@ -1069,8 +997,7 @@ void loop()
         currentState = STATE_GAUGES;
       }
     }
-    else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX ||
-             currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
+    else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
     {
       saveValues();
       buildMenu();
@@ -1083,7 +1010,6 @@ void loop()
   {
     lastDrawTime = millis();
     u8g2.clearBuffer();
-
     if (currentState == STATE_GAUGES)
       draw_GaugeScreen(screenIndex);
     else if (currentState == STATE_CONFIG)
@@ -1097,11 +1023,7 @@ void loop()
     else if (currentState == STATE_EDIT_SPEED)
       drawEditScreen("Edit Target Speed", String(TARGET_SPEED), "U/D: Edit | OK: Save");
     else if (currentState == STATE_EDIT_BRIGHTNESS)
-    {
-      int brightPct = map(OLED_BRIGHTNESS, 0, 255, 0, 100);
-      drawEditScreen("Brightness", String(brightPct) + " %", "U/D: Edit | OK: Save");
-    }
-
+      drawEditScreen("Brightness", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)) + " %", "U/D: Edit | OK: Save");
     u8g2.sendBuffer();
   }
   yield();
