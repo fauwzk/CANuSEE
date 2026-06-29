@@ -775,13 +775,32 @@ void draw_GaugeScreen(uint8_t index)
   case 6:
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
+
+    // 1. En-tête
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(14, "0 - " + String(TARGET_SPEED) + " km/h");
+
+    // 2. Logique d'affichage du chrono
     u8g2.setFont(u8g2_font_helvR18_tr);
-    if (timerReady && !timerRunning && (timerRunning ? ((millis() - speedTimerStart) / 1000.0) : lastTimerValue) == 0.0)
-      drawStringCenter(36, "READY");
+
+    if (timerRunning)
+    {
+      // On est en train de courir : affiche le temps réel
+      float currentTime = (millis() - speedTimerStart) / 1000.0;
+      drawStringCenter(36, String(currentTime, 2) + " s");
+    }
+    else if (lastTimerValue > 0)
+    {
+      // La course est finie : affiche le dernier score
+      drawStringCenter(36, String(lastTimerValue, 2) + " s");
+    }
     else
-      drawStringCenter(36, String(timerRunning ? ((millis() - speedTimerStart) / 1000.0) : lastTimerValue, 2) + " s");
+    {
+      // État initial (READY)
+      drawStringCenter(36, "READY");
+    }
+
+    // 3. Vitesse actuelle
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
     break;
