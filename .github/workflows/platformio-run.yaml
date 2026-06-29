@@ -39,16 +39,16 @@ jobs:
         run: pio run -t clean
       
       - name: Build firmware
-        run: pio run -e esp32-c3-devkitm-1 -v
+        run: pio run -e esp32c3 -v
 
       - name: Build LittleFS
-        run: pio run -t buildfs
+        run: pio run -e esp32c3 -t buildfs
 
       - name: Prepare release artifacts
         run: |
           mkdir -p release
-          cp .pio/build/**/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
-          cp .pio/build/**/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
+          cp .pio/build/esp32c3/firmware.bin release/firmware-${{ steps.sha.outputs.short }}.bin
+          cp .pio/build/esp32c3/littlefs.bin release/littlefs-${{ steps.sha.outputs.short }}.bin
           
       - name: Create zip release
         run: |
