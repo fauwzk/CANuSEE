@@ -11,7 +11,7 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
-// ==== BLE Libraries (Remplacent ELMduino pour la vitesse) ====
+// ==== BLE Libraries ====
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
@@ -160,14 +160,12 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
     char c = (char)pData[i];
     if (c == '>')
     {
-      elmResponseReady = true;
+      elmResponseReady = true; // Fin du message : on lance le traitement !
     }
-    else if (c != '\r' && c != '\n')
-    { // On garde les espaces, ils peuvent être utiles
+    else if (c != '\r' && c != '\n' && c != ' ')
+    {
       elmBuffer += c;
     }
-    // Si on reçoit des données mais pas de '>', on force le déclenchement après un court délai
-    // pour éviter de rester bloqué.
   }
 }
 
@@ -189,37 +187,60 @@ class MyClientCallback : public BLEClientCallbacks
 
 bool connectToServer()
 {
-  bleStatusStr = "Searching...";
+  bleStatusStr = "Connecting...";
   BLEClient *pClient = BLEDevice::createClient();
   pClient->setClientCallbacks(new MyClientCallback());
 
   if (!pClient->connect(myDevice))
     return false;
 
-  // On itère sur TOUS les services du dongle
-  std::map<std::string, BLERemoteService *> *pServices = pClient->getServices();
-  for (auto const &[key, pService] : *pServices)
+  BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
+  if (pRemoteService == nullptr)
   {
-    // On cherche toutes les caractéristiques dans chaque service
-    std::map<std::string, BLERemoteCharacteristic *> *pChars = pService->getCharacteristics();
-    for (auto const &[key2, pChar] : *pChars)
+    pClient->disconnect();
+    return false;
+  }
+
+  // --- DÉCOUVERTE DYNAMIQUE TX/RX ---
+  // Au lieu de deviner l'UUID, on parcourt toutes les caractéristiques du service FFF0
+  std::map<std::string, BLERemoteCharacteristic *> *pChars = pRemoteService->getCharacteristics();
+  for (auto const &pair : *pChars)
+  {
+    BLERemoteCharacteristic *pChar = pair.second;
+
+    // Si la caractéristique permet d'écrire, on la sauvegarde comme TX
+    if (pChar->canWrite() || pChar->canWriteNoResponse())
     {
-      if (pChar->canNotify())
+      pTxCharacteristic = pChar;
+    }
+
+    // Si la caractéristique permet de notifier, on la sauvegarde comme RX
+    if (pChar->canNotify())
+    {
+      pRxCharacteristic = pChar;
+      pRxCharacteristic->registerForNotify(notifyCallback);
+
+      // Activation Vitale des Notifications (CCCD 0x2902)
+      uint8_t enableValue[] = {0x01, 0x00};
+      BLERemoteDescriptor *pDesc = pChar->getDescriptor(BLEUUID((uint16_t)0x2902));
+      if (pDesc != nullptr)
       {
-        pRemoteCharacteristic = pChar;
-        pRemoteCharacteristic->registerForNotify(notifyCallback);
-
-        // Active notification pour chaque caractéristique trouvée
-        const uint8_t enableValue[] = {0x01, 0x00};
-        BLERemoteDescriptor *pDesc = pChar->getDescriptor(BLEUUID((uint16_t)0x2902));
-        if (pDesc != nullptr)
-          pDesc->writeValue((uint8_t *)enableValue, 2, true);
-
-        bleStatusStr = "Found Data Char!";
-        return true; // On a trouvé un canal de données, on s'arrête ici
+        pDesc->writeValue(enableValue, 2, true);
       }
     }
   }
+
+  if (pTxCharacteristic != nullptr && pRxCharacteristic != nullptr)
+  {
+    bleStatusStr = "Init ELM327...";
+    elmInitStep = 0;
+    elmBuffer = "";
+    elmResponseReady = false;
+    return true;
+  }
+
+  bleStatusStr = "RX/TX Not Found";
+  pClient->disconnect();
   return false;
 }
 
@@ -242,8 +263,8 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
 
 void sendELMCommand(String cmd)
 {
-  cmd += "\r\n"; // Modification ici
-  if (connected && pRemoteCharacteristic != nullptr)
+  cmd += "\r";
+  if (connected && pTxCharacteristic != nullptr)
   {
     pTxCharacteristic->writeValue(cmd.c_str(), cmd.length());
     lastElmRequest = millis();
@@ -309,7 +330,6 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
-// Machine d'état Asynchrone forcée
 void processBLE()
 {
   if (doConnect == true)
@@ -321,13 +341,7 @@ void processBLE()
 
   if (connected)
   {
-    // Si on est connecté mais bloqué à Step 0, on insiste avec ATZ
-    static unsigned long lastRetry = 0;
-    if (elmInitStep == 0 && (millis() - lastRetry > 2000))
-    {
-      sendELMCommand("ATZ");
-      lastRetry = millis();
-    }
+    bool triggerNextRequest = false;
 
     // Timeout de sécurité : force la relance si l'adaptateur n'a pas répondu
     if (!elmResponseReady && (millis() - lastElmRequest > 500))
@@ -339,11 +353,7 @@ void processBLE()
     {
       if (elmInitStep < 5)
       {
-        // Peu importe ce qu'il répond, on passe à l'étape suivante
-        // pour voir si ça débloque le flux
         elmInitStep++;
-        Serial.print("Next Step: ");
-        Serial.println(elmInitStep);
       }
       else
       {
@@ -351,18 +361,33 @@ void processBLE()
       }
       elmBuffer = "";
       elmResponseReady = false;
+      triggerNextRequest = true; // On tire la prochaine requête instantanément
     }
 
-    // Polling si on est enfin initialisé
-    if (elmInitStep >= 5 && (millis() - lastElmRequest > 150))
+    if (triggerNextRequest)
     {
-      currentExpectedPID = OBD_PIDS[currentPidIndex];
-      String cmd = "01";
-      if (currentExpectedPID < 0x10)
-        cmd += "0";
-      cmd += String(currentExpectedPID, HEX);
-      sendELMCommand(cmd);
-      currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
+      if (elmInitStep == 0)
+        sendELMCommand("ATZ"); // Reset
+      else if (elmInitStep == 1)
+        sendELMCommand("ATE0"); // Desactive l'écho local (ultra rapide)
+      else if (elmInitStep == 2)
+        sendELMCommand("ATL0"); // Desactive les retours chariots
+      else if (elmInitStep == 3)
+        sendELMCommand("ATS0"); // Desactive les espaces
+      else if (elmInitStep == 4)
+        sendELMCommand("ATSP0"); // Auto-détection du protocole voiture
+      else
+      {
+        // Boucle rapide d'interrogation PIDs
+        currentExpectedPID = OBD_PIDS[currentPidIndex];
+        String cmd = "01";
+        if (currentExpectedPID < 0x10)
+          cmd += "0";
+        cmd += String(currentExpectedPID, HEX);
+        sendELMCommand(cmd);
+
+        currentPidIndex = (currentPidIndex + 1) % NUM_PIDS;
+      }
     }
   }
   else if (doScan)
@@ -370,6 +395,7 @@ void processBLE()
     BLEDevice::getScan()->start(2, false);
   }
 }
+// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 void drawStringCenter(int y, String text)
@@ -738,20 +764,22 @@ void draw_GaugeScreen(uint8_t index)
     break;
   case 10:
   {
-    u8g2.setFont(u8g2_font_5x7_tr);
-    u8g2.setCursor(0, 10);
-    u8g2.print("Status: ");
-    u8g2.print(bleStatusStr);
+    u8g2.setFont(u8g2_font_5x7_tr); // Plus petit pour afficher toutes les infos de diagnostic
+    drawStringCenter(8, "BLE OBDBLE STATUS");
+    u8g2.drawLine(0, 12, 128, 12);
 
-    u8g2.setCursor(0, 25);
-    u8g2.print("Buffer: ");
+    u8g2.setCursor(0, 22);
+    u8g2.print("Status: " + bleStatusStr);
+    u8g2.setCursor(0, 32);
+    u8g2.print("Packets RX: " + String(packetsReceived));
+    u8g2.setCursor(0, 42);
+    u8g2.print("Init Step: " + String(elmInitStep) + "/5");
+
+    u8g2.setCursor(0, 52);
+    u8g2.print("Buf: ");
     u8g2.print(elmBuffer);
 
-    u8g2.setCursor(0, 40);
-    u8g2.print("RSSI: ");
-    u8g2.print(myDevice ? String(myDevice->getRSSI()) : "N/A");
-
-    u8g2.sendBuffer();
+    draw_ScreenNumber(screenIndex);
   }
   break;
   }
@@ -832,7 +860,6 @@ void setup()
 
   if (currentState != STATE_CONFIG)
   {
-    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT); // Force l'encryption
     BLEDevice::init("CANuSEE");
     BLEScan *pBLEScan = BLEDevice::getScan();
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
