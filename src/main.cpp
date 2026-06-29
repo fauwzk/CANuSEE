@@ -134,6 +134,7 @@ static BLEUUID serviceUUID("0000fff0-0000-1000-8000-00805f9b34fb");
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
+static boolean scanIsRunning = false;                        // <--- NOUVEAU
 static BLERemoteCharacteristic *pTxCharacteristic = nullptr; // Pour envoyer à l'ELM
 static BLERemoteCharacteristic *pRxCharacteristic = nullptr; // Pour lire l'ELM
 static BLEAdvertisedDevice *myDevice;
@@ -167,6 +168,13 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
       elmBuffer += c;
     }
   }
+}
+
+// ==== NOUVEAU CALLBACK ASYNCHRONE ====
+void scanCompleteCB(BLEScanResults results)
+{
+  scanIsRunning = false;
+  BLEDevice::getScan()->clearResults(); // Indispensable pour ne pas saturer la RAM !
 }
 
 class MyClientCallback : public BLEClientCallbacks
@@ -257,6 +265,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
       doScan = false;
+      scanIsRunning = false; // <--- NOUVEAU : libère le scanner
     }
   }
 };
@@ -392,7 +401,13 @@ void processBLE()
   }
   else if (doScan)
   {
-    BLEDevice::getScan()->start(2, false);
+    // Si on doit scanner et qu'aucun scan n'est en cours, on lance un scan asynchrone
+    if (!scanIsRunning)
+    {
+      scanIsRunning = true;
+      // Le 2ème paramètre "scanCompleteCB" rend la fonction 100% non-bloquante !
+      BLEDevice::getScan()->start(2, scanCompleteCB, false);
+    }
   }
 }
 // ==========================================
