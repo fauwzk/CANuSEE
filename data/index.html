@@ -89,7 +89,7 @@
             border: 1px solid var(--border);
             border-radius: 6px;
             padding: 8px 12px;
-            width: 110px;
+            width: 115px;
             text-align: center;
         }
 
@@ -147,7 +147,6 @@
             gap: 15px;
         }
 
-        /* Style spécifique pour la simulation OLED */
         .oled-container {
             display: flex;
             justify-content: center;
@@ -243,7 +242,8 @@
                         <label>Affichage</label>
                         <select name="boost_gauge_type">
                             <option value="0" %SELECTED_BOOST_TEXT%>Texte</option>
-                            <option value="1" %SELECTED_BOOST_GAUGE%>Jauge</option>
+                            <option value="1" %SELECTED_BOOST_GAUGE%>Graphique</option>
+                            <option value="2" %SELECTED_BOOST_DIAL%>Cadran Rond</option>
                         </select>
                     </div>
                 </div>
@@ -254,7 +254,8 @@
                         <label>Affichage</label>
                         <select name="iat_gauge_type">
                             <option value="0" %SELECTED_IAT_TEXT%>Texte</option>
-                            <option value="1" %SELECTED_IAT_GAUGE%>Jauge</option>
+                            <option value="1" %SELECTED_IAT_GAUGE%>Graphique</option>
+                            <option value="2" %SELECTED_IAT_DIAL%>Cadran Rond</option>
                         </select>
                     </div>
                 </div>
@@ -265,18 +266,8 @@
                         <label>Affichage</label>
                         <select name="engload_gauge_type">
                             <option value="0" %SELECTED_LOAD_TEXT%>Texte</option>
-                            <option value="1" %SELECTED_LOAD_GAUGE%>Jauge</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h3>Écran 4 : Tension Batterie</h3>
-                    <div class="form-row">
-                        <label>Affichage</label>
-                        <select name="voltage_gauge_type">
-                            <option value="0" %SELECTED_VOLTAGE_TEXT%>Texte</option>
-                            <option value="1" %SELECTED_VOLTAGE_GAUGE%>Jauge</option>
+                            <option value="1" %SELECTED_LOAD_GAUGE%>Graphique</option>
+                            <option value="2" %SELECTED_LOAD_DIAL%>Cadran Rond</option>
                         </select>
                     </div>
                 </div>
@@ -287,7 +278,8 @@
                         <label>Affichage</label>
                         <select name="coolant_gauge_type">
                             <option value="0" %SELECTED_COOLANT_TEXT%>Texte</option>
-                            <option value="1" %SELECTED_COOLANT_GAUGE%>Jauge</option>
+                            <option value="1" %SELECTED_COOLANT_GAUGE%>Graphique</option>
+                            <option value="2" %SELECTED_COOLANT_DIAL%>Cadran Rond</option>
                         </select>
                     </div>
                 </div>
@@ -319,8 +311,8 @@
     <script>
         const canvas = document.getElementById('oled-sim');
         const ctx = canvas.getContext('2d');
-        const screenNames = ["Pression MAF", "Pression Turbo", "Temp admission", "Charge moteur", "Tension Bat", "Temp LdR", "DTC Codes", "Dash", "Timer", "Speed"];
-        const units = ["kPa", "Bar", "°C", "%", "V", "°C", "", "", "", "km/h"];
+        const screenNames = ["MAP/Air", "Boost", "IAT", "Load", "Coolant", "Dash", "Timer", "Speed", "BLE"];
+        const units = ["kPa", "Bar", "°C", "%", "°C", "", "", "km/h", ""];
 
         function drawCenterText(text, y) {
             const width = ctx.measureText(text).width;
@@ -333,11 +325,10 @@
             ctx.fillStyle = "black";
             ctx.font = "10px monospace";
             drawCenterText("CANuSEE Web", 60);
-            ctx.fillText((screenIndex + 1) + "/10", 2, 60);
+            ctx.fillText((screenIndex + 1) + "/9", 2, 60);
         }
 
         function renderOLED(data) {
-            // 1. Dessiner l'interface normalement
             ctx.globalAlpha = 1.0;
             ctx.fillStyle = "black";
             ctx.fillRect(0, 0, 128, 64);
@@ -347,13 +338,12 @@
             let unit = units[data.screen] || "";
 
             switch (data.screen) {
-                case 0: value = data.maf; break;
+                case 0: value = data.map; break;
                 case 1: value = data.boost; break;
                 case 2: value = data.iat; break;
                 case 3: value = data.load; break;
-                case 4: value = data.battery; break;
-                case 5: value = data.coolant; break;
-                case 9: value = data.speed; break;
+                case 4: value = data.coolant; break;
+                case 7: value = data.speed; break;
             }
 
             ctx.fillStyle = "white";
@@ -362,7 +352,7 @@
 
             ctx.font = "bold 18px sans-serif";
             let valStr = Number(value).toFixed(1);
-            if (data.screen >= 0 && data.screen <= 5 || data.screen == 9) {
+            if (data.screen >= 0 && data.screen <= 4 || data.screen == 7) {
                 drawCenterText(valStr + " " + unit, 40);
             } else {
                 drawCenterText("Voir ESP32", 40);
@@ -370,16 +360,14 @@
 
             drawBottomBar(data.screen);
 
-            // 2. Appliquer la simulation de luminosité
-            // On s'attend à ce que data.brightness soit entre 0 (éteint) et 255 (max)
             let brightness = data.brightness !== undefined ? data.brightness : 255;
-            let dimAlpha = 1.0 - (brightness / 255.0); // Calcule l'opacité du voile noir
+            let dimAlpha = 1.0 - (brightness / 255.0);
 
             if (dimAlpha > 0) {
                 ctx.globalAlpha = dimAlpha;
                 ctx.fillStyle = "black";
                 ctx.fillRect(0, 0, 128, 64);
-                ctx.globalAlpha = 1.0; // Reset pour le prochain rendu
+                ctx.globalAlpha = 1.0;
             }
         }
 
@@ -401,7 +389,7 @@
         ctx.fillStyle = "white"; ctx.font = "12px sans-serif";
         drawCenterText("Connecting...", 32);
 
-        setInterval(fetchState, 5000); // Rafraîchit toutes les 5 secondes
+        setInterval(fetchState, 5000);
         fetchState(); 
     </script>
 </body>

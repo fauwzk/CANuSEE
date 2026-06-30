@@ -312,22 +312,19 @@ void parseOBDResponse(String response, uint8_t pid)
       dashRPM = engineRPM;
       break;
     case 0x0D:
-      // === LOGIQUE DU CHRONOMETRE INTEGREE ICI ===
       if (A == 0)
       {
-        timerReady = true;    // Prêt à partir
-        timerRunning = false; // Sécurité pour remettre à zéro
+        timerReady = true;
+        timerRunning = false;
       }
       else if (A > 0 && A < TARGET_SPEED && timerReady && !timerRunning)
       {
-        // Démarrage du chronomètre dès que la vitesse > 0
         speedTimerStart = millis();
         timerRunning = true;
         timerReady = false;
       }
       else if (A >= TARGET_SPEED && timerRunning)
       {
-        // Arrêt du chronomètre quand on atteint la cible
         lastTimerValue = (millis() - speedTimerStart) / 1000.0;
         timerRunning = false;
         timerReady = false;
@@ -342,7 +339,6 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
-// ==== SMART POLLING : Demande uniquement ce qui est affiché ====
 uint8_t getNextSmartPID()
 {
   static uint8_t dashStep = 0;
@@ -354,7 +350,7 @@ uint8_t getNextSmartPID()
     return 0x0B;
   case 1:
     boostStep = !boostStep;
-    return boostStep ? 0x0B : 0x70; // Alterne entre Pression Réelle et Cible
+    return boostStep ? 0x0B : 0x70;
   case 2:
     return 0x0F;
   case 3:
@@ -372,11 +368,11 @@ uint8_t getNextSmartPID()
     if (dashStep == 3)
       return 0x0C;
   case 6:
-    return 0x0D; // Timer (Besoin Vitesse)
+    return 0x0D;
   case 7:
-    return 0x0D; // Speed
+    return 0x0D;
   default:
-    return 0x0C; // Par défaut RPM
+    return 0x0C;
   }
 }
 
@@ -392,8 +388,6 @@ void processBLE()
   if (connected)
   {
     bool triggerNextRequest = false;
-
-    // Timeout (Laisse plus de temps pour l'étape 4 de détection auto ATSP0)
     unsigned long timeoutLimit = (elmInitStep == 4) ? 1500 : 500;
     if (!elmResponseReady && (millis() - lastElmRequest > timeoutLimit))
     {
@@ -407,7 +401,7 @@ void processBLE()
         elmInitStep++;
         if (elmInitStep == 5 && currentState == STATE_CONNECTING)
         {
-          currentState = STATE_GAUGES; // Démarrage terminé !
+          currentState = STATE_GAUGES;
         }
       }
       else
@@ -451,7 +445,6 @@ void processBLE()
     }
   }
 }
-// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 void drawStringCenter(int y, String text)
@@ -472,7 +465,6 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
-// Nettoyage Web UI (Valeurs mortes remplacées par vide et ajout du mode Dial)
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -529,7 +521,6 @@ void loadValues()
 {
   EEPROM.get(0, cfg);
   screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
-  // Autoriser la valeur '2' (Cadran Dial) pour être chargée depuis la mémoire
   BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type <= 2) ? cfg.boost_screen_type : 0;
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
@@ -765,7 +756,6 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
-  // Ligne pointillée pour la pression cible (Target)
   if (targetValue > -999.0)
   {
     double t_val = constrain(targetValue, minValue, maxValue);
@@ -792,11 +782,9 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
   int cy = 52;
   int r = 40;
 
-  // Label en haut
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(8, label);
 
-  // Traits du cadran (Ticks) avec correction de la géométrie
   for (int i = 0; i <= 10; i++)
   {
     float a = PI - (i * PI / 10.0);
@@ -810,15 +798,12 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
     u8g2.drawLine(x1, y1, x2, y2);
   }
 
-  // Textes Min/Max
   drawStringLeft(0, 58, String(minValue, 1));
   drawStringRight(128, 58, String(maxValue, 1));
 
-  // Valeur Centrale Actuelle
   u8g2.setFont(u8g2_font_helvR12_tr);
   drawStringCenter(64, String(value, 1) + " " + unit);
 
-  // Aiguille
   float val = constrain(value, minValue, maxValue);
   float angle = PI - ((val - minValue) / (maxValue - minValue)) * PI;
 
@@ -833,9 +818,8 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
   int by2 = cy - sin(aRight) * 6;
 
   u8g2.drawTriangle(nx, ny, bx1, by1, bx2, by2);
-  u8g2.drawCircle(cx, cy, 3); // Axe central
+  u8g2.drawCircle(cx, cy, 3);
 
-  // Curseur Cible (Petit rond sur le bord du cadran)
   if (targetValue > -999.0)
   {
     float t_val = constrain(targetValue, minValue, maxValue);
@@ -904,38 +888,32 @@ void draw_GaugeScreen(uint8_t index)
     draw_BottomText(version_string);
     draw_ScreenNumber(screenIndex);
 
-    // 1. En-tête
     u8g2.setFont(u8g2_font_helvR12_tr);
     drawStringCenter(14, "0 - " + String(TARGET_SPEED) + " km/h");
 
-    // 2. Logique d'affichage du chrono
     u8g2.setFont(u8g2_font_helvR18_tr);
 
     if (timerRunning)
     {
-      // Chrono en cours : affiche le temps réel
       float currentTime = (millis() - speedTimerStart) / 1000.0;
       drawStringCenter(36, String(currentTime, 2) + " s");
     }
     else if (lastTimerValue > 0)
     {
-      // Chrono terminé : affiche le score enregistré
       drawStringCenter(36, String(lastTimerValue, 2) + " s");
     }
     else
     {
-      // À l'arrêt, attend le départ
       drawStringCenter(36, "READY");
     }
 
-    // 3. Vitesse actuelle
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
     break;
   case 7:
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
-  case 8: // L'écran Diag est bien conservé ici !
+  case 8:
   {
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringCenter(8, "BLE OBDBLE STATUS");
@@ -1027,18 +1005,21 @@ void setup()
     restart_ESP();
   }
 
-  startServer();
-
-  if (currentState != STATE_CONFIG)
+  // === ISOLATION DU WI-FI ET DU BLUETOOTH ===
+  if (currentState == STATE_CONFIG)
   {
+    // MODE CONFIG (MENU MAINTENU) : On allume le WiFi, et UNIQUEMENT le WiFi
+    startServer();
+  }
+  else
+  {
+    // MODE ROUTE : On coupe le WiFi matériellement pour ne pas crasher le BLE
+    WiFi.mode(WIFI_OFF);
+
     BLEDevice::init("CANuSEE");
     BLEScan *pBLEScan = BLEDevice::getScan();
-
-    // === OPTIMISATION DE VITESSE BLE ===
-    // Force le module à scanner beaucoup plus rapidement (100ms interval, 99ms d'écoute)
     pBLEScan->setInterval(100);
     pBLEScan->setWindow(99);
-
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
     pBLEScan->setActiveScan(true);
     doScan = true;
@@ -1047,14 +1028,14 @@ void setup()
 
 void loop()
 {
-  server.handleClient();
-  ElegantOTA.loop();
-  dnsServer.processNextRequest();
-
-  if (ota_updating)
+  // Le serveur Wi-Fi et les mises à jour OTA ne tournent QUE si on est en mode configuration
+  if (currentState == STATE_CONFIG)
   {
-    yield();
-    return;
+    server.handleClient();
+    ElegantOTA.loop();
+    dnsServer.processNextRequest();
+    if (ota_updating)
+      return; // Ne bloque la boucle que pendant l'OTA
   }
 
   if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
@@ -1070,7 +1051,7 @@ void loop()
     if (currentState == STATE_CONFIG)
       restart_ESP();
     else if (currentState == STATE_CONNECTING)
-      currentState = STATE_CONFIG;
+      restart_ESP(); // Force le redémarrage (le WiFi est coupé, on ne peut pas passer en config à la volée)
     else if (currentState == STATE_GAUGES)
     {
       buildMenu();
@@ -1139,8 +1120,15 @@ void loop()
       if (action == ACT_CLOSE)
         currentState = STATE_GAUGES;
       else if (action == ACT_ENTER_CONFIG)
-        currentState = STATE_CONFIG;
-      if (action == ACT_TOGGLE_STYLE)
+      {
+        // Pour rentrer en config, l'utilisateur doit maintenir le bouton MENU au démarrage pour ne pas crasher le BLE
+        u8g2.clearBuffer();
+        drawStringCenter(30, "Hold MENU & Reboot");
+        u8g2.sendBuffer();
+        delay(2000);
+        restart_ESP();
+      }
+      else if (action == ACT_TOGGLE_STYLE)
       {
         if (screenIndex == 1)
           BOOST_SCREEN = (BOOST_SCREEN + 1) % 3;
