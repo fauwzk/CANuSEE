@@ -72,8 +72,8 @@ const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
-float mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
-float coolantTemp = 0.0, turboPressureState = 0.0;
+float mapPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
+float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
 // Variables pour le Chrono 0-100
@@ -295,12 +295,17 @@ void parseOBDResponse(String response, uint8_t pid)
       coolantTemp = A - 40;
       dashCoolant = coolantTemp;
       break;
-    case 0x0B:
-      mafPressure = A;
+    case 0x0B: // Pression MAP (Collecteur)
+      mapPressure = A;
       turboPressureState = (A - 100.0) * 0.01;
       if (turboPressureState < 0)
         turboPressureState = 0;
       dashBoost = turboPressureState;
+      break;
+    case 0x70: // Commanded Boost Pressure (Pression cible)
+      targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
+      if (targetBoost < 0)
+        targetBoost = 0;
       break;
     case 0x0C:
       engineRPM = ((A * 256.0) + B) / 4.0;
@@ -341,12 +346,15 @@ void parseOBDResponse(String response, uint8_t pid)
 uint8_t getNextSmartPID()
 {
   static uint8_t dashStep = 0;
+  static uint8_t boostStep = 0;
+
   switch (screenIndex)
   {
   case 0:
     return 0x0B;
   case 1:
-    return 0x0B;
+    boostStep = !boostStep;
+    return boostStep ? 0x0B : 0x70; // Alterne entre Pression Réelle et Cible
   case 2:
     return 0x0F;
   case 3:
@@ -464,7 +472,7 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
-// Nettoyage Web UI (Valeurs mortes remplacées par vide)
+// Nettoyage Web UI (Valeurs mortes remplacées par vide et ajout du mode Dial)
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -476,14 +484,22 @@ String generateWebPage()
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version_string);
+
   html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_BOOST_DIAL%", (BOOST_SCREEN == 2) ? "selected" : "");
+
   html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_LOAD_DIAL%", (ENGLOAD_SCREEN == 2) ? "selected" : "");
+
   html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_COOLANT_DIAL%", (COOLANT_SCREEN == 2) ? "selected" : "");
+
   html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
   html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
+  html.replace("%SELECTED_IAT_DIAL%", (IAT_SCREEN == 2) ? "selected" : "");
 
   html.replace("%SELECTED_VOLTAGE_TEXT%", "");
   html.replace("%SELECTED_VOLTAGE_GAUGE%", "");
@@ -513,12 +529,13 @@ void loadValues()
 {
   EEPROM.get(0, cfg);
   screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
-  BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type < 2) ? cfg.boost_screen_type : 0;
+  // Autoriser la valeur '2' (Cadran Dial) pour être chargée depuis la mémoire
+  BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type <= 2) ? cfg.boost_screen_type : 0;
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
-  ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type < 2) ? cfg.engload_screen_type : 0;
-  COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type < 2) ? cfg.coolant_screen_type : 0;
-  IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type < 2) ? cfg.intake_temp_screen_type : 0;
+  ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type <= 2) ? cfg.engload_screen_type : 0;
+  COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type <= 2) ? cfg.coolant_screen_type : 0;
+  IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type <= 2) ? cfg.intake_temp_screen_type : 0;
   TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
   TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
   OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
@@ -605,11 +622,21 @@ void buildMenu()
   if (screenIndex >= 1 && screenIndex <= 4)
   {
     String s = "Type: Text";
-    if ((screenIndex == 1 && BOOST_SCREEN) || (screenIndex == 2 && IAT_SCREEN) ||
-        (screenIndex == 3 && ENGLOAD_SCREEN) || (screenIndex == 4 && COOLANT_SCREEN))
-    {
-      s = "Type: Gauge";
-    }
+    int currentType = 0;
+    if (screenIndex == 1)
+      currentType = BOOST_SCREEN;
+    else if (screenIndex == 2)
+      currentType = IAT_SCREEN;
+    else if (screenIndex == 3)
+      currentType = ENGLOAD_SCREEN;
+    else if (screenIndex == 4)
+      currentType = COOLANT_SCREEN;
+
+    if (currentType == 1)
+      s = "Type: Graph";
+    else if (currentType == 2)
+      s = "Type: Dial";
+
     menuText[menuSize] = s;
     menuAction[menuSize++] = ACT_TOGGLE_STYLE;
   }
@@ -713,7 +740,7 @@ String formatDecimal(double value, uint8_t decimals)
   return result;
 }
 
-void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue, double maxValue, String label, String unit)
+void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
   double valToStore = constrain(newValue, minValue, maxValue);
   history.values[history.currentIndex] = valToStore;
@@ -738,6 +765,18 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
+  // Ligne pointillée pour la pression cible (Target)
+  if (targetValue > -999.0)
+  {
+    double t_val = constrain(targetValue, minValue, maxValue);
+    int t_height = (int)(chartHeight * ((t_val - minValue) / range));
+    int ty = baseY - t_height;
+    for (int tx = chartX; tx < chartX + chartWidth; tx += 4)
+    {
+      u8g2.drawPixel(tx, ty);
+    }
+  }
+
   int maxLabelY = chartY + 8, minLabelY = baseY, valCenterY = chartY + (chartHeight / 2) + 4, alignBorderX = chartX - 2;
   drawStringRight(alignBorderX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
   drawStringRight(alignBorderX, minLabelY, alignSign(formatDecimal(minValue, 1)));
@@ -747,36 +786,106 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
   draw_ScreenNumber(screenIndex);
 }
 
+void draw_RoundGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
+{
+  int cx = 64;
+  int cy = 52;
+  int r = 40;
+
+  // Label en haut
+  u8g2.setFont(u8g2_font_helvR08_tr);
+  drawStringCenter(8, label);
+
+  // Traits du cadran (Ticks) avec correction de la géométrie
+  for (int i = 0; i <= 10; i++)
+  {
+    float a = PI - (i * PI / 10.0);
+    int r_inner = r - ((i % 5 == 0) ? 6 : 3);
+
+    int x1 = cx + cos(a) * r;
+    int y1 = cy - sin(a) * r;
+    int x2 = cx + cos(a) * r_inner;
+    int y2 = cy - sin(a) * r_inner;
+
+    u8g2.drawLine(x1, y1, x2, y2);
+  }
+
+  // Textes Min/Max
+  drawStringLeft(0, 58, String(minValue, 1));
+  drawStringRight(128, 58, String(maxValue, 1));
+
+  // Valeur Centrale Actuelle
+  u8g2.setFont(u8g2_font_helvR12_tr);
+  drawStringCenter(64, String(value, 1) + " " + unit);
+
+  // Aiguille
+  float val = constrain(value, minValue, maxValue);
+  float angle = PI - ((val - minValue) / (maxValue - minValue)) * PI;
+
+  int nx = cx + cos(angle) * (r - 5);
+  int ny = cy - sin(angle) * (r - 5);
+
+  float aLeft = angle + 0.15;
+  float aRight = angle - 0.15;
+  int bx1 = cx + cos(aLeft) * 6;
+  int by1 = cy - sin(aLeft) * 6;
+  int bx2 = cx + cos(aRight) * 6;
+  int by2 = cy - sin(aRight) * 6;
+
+  u8g2.drawTriangle(nx, ny, bx1, by1, bx2, by2);
+  u8g2.drawCircle(cx, cy, 3); // Axe central
+
+  // Curseur Cible (Petit rond sur le bord du cadran)
+  if (targetValue > -999.0)
+  {
+    float t_val = constrain(targetValue, minValue, maxValue);
+    float t_angle = PI - ((t_val - minValue) / (maxValue - minValue)) * PI;
+    int tx = cx + cos(t_angle) * (r + 2);
+    int ty = cy - sin(t_angle) * (r + 2);
+    u8g2.drawCircle(tx, ty, 3);
+  }
+
+  draw_ScreenNumber(screenIndex);
+}
+
 void draw_GaugeScreen(uint8_t index)
 {
   switch (index)
   {
   case 0:
-    draw_InfoText("Pression MAP/Air", mafPressure, "kPa");
+    draw_InfoText("MAP Pressure", mapPressure, "kPa");
     break;
   case 1:
     if (BOOST_SCREEN == 0)
       draw_InfoText("Pression Turbo", turboPressureState, "Bar");
+    else if (BOOST_SCREEN == 1)
+      draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar", targetBoost);
     else
-      draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar");
+      draw_RoundGauge(turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Pression Turbo", "Bar", targetBoost);
     break;
   case 2:
     if (IAT_SCREEN == 0)
       draw_InfoText("Temp admission", intakeTemp, "°C");
-    else
+    else if (IAT_SCREEN == 1)
       draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp admission", "°C");
+    else
+      draw_RoundGauge(intakeTemp, -20.0, 60.0, "Temp admission", "°C");
     break;
   case 3:
     if (ENGLOAD_SCREEN == 0)
       draw_InfoText("Charge Moteur", engineLoad, "%");
-    else
+    else if (ENGLOAD_SCREEN == 1)
       draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge", "%");
+    else
+      draw_RoundGauge(engineLoad, 0, 100, "Charge Moteur", "%");
     break;
   case 4:
     if (COOLANT_SCREEN == 0)
       draw_InfoText("Temp LdR", coolantTemp, "°C");
-    else
+    else if (COOLANT_SCREEN == 1)
       draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
+    else
+      draw_RoundGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "°C");
     break;
   case 5:
     u8g2.setFont(u8g2_font_helvR08_tr);
@@ -876,7 +985,7 @@ void startServer()
       saveValues(); server.sendHeader("Location", "/"); server.send(303); });
   server.on("/api/state", HTTP_GET, []()
             {
-      String json = "{\"screen\":" + String(screenIndex) + ",\"maf\":" + String(mafPressure) + ",\"boost\":" + String(turboPressureState) + 
+      String json = "{\"screen\":" + String(screenIndex) + ",\"map\":" + String(mapPressure) + ",\"boost\":" + String(turboPressureState) + 
                     ",\"iat\":" + String(intakeTemp) + ",\"load\":" + String(engineLoad) + 
                     ",\"coolant\":" + String(coolantTemp) + ",\"speed\":" + String(currentSpeed) + ",\"boost_mode\":" + String(BOOST_SCREEN) + 
                     ",\"min_boost\":" + String(TURBO_MIN_BAR) + ",\"max_boost\":" + String(TURBO_MAX_BAR) + ",\"brightness\":" + String(OLED_BRIGHTNESS) + "}";
@@ -1031,16 +1140,16 @@ void loop()
         currentState = STATE_GAUGES;
       else if (action == ACT_ENTER_CONFIG)
         currentState = STATE_CONFIG;
-      else if (action == ACT_TOGGLE_STYLE)
+      if (action == ACT_TOGGLE_STYLE)
       {
         if (screenIndex == 1)
-          BOOST_SCREEN = !BOOST_SCREEN;
+          BOOST_SCREEN = (BOOST_SCREEN + 1) % 3;
         if (screenIndex == 2)
-          IAT_SCREEN = !IAT_SCREEN;
+          IAT_SCREEN = (IAT_SCREEN + 1) % 3;
         if (screenIndex == 3)
-          ENGLOAD_SCREEN = !ENGLOAD_SCREEN;
+          ENGLOAD_SCREEN = (ENGLOAD_SCREEN + 1) % 3;
         if (screenIndex == 4)
-          COOLANT_SCREEN = !COOLANT_SCREEN;
+          COOLANT_SCREEN = (COOLANT_SCREEN + 1) % 3;
         saveValues();
         buildMenu();
       }
