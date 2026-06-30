@@ -61,14 +61,14 @@ enum AppState
   STATE_EDIT_BRIGHTNESS,
   STATE_CONFIG
 };
-AppState currentState = STATE_CONNECTING; // Démarre sur l'écran de connexion
+AppState currentState = STATE_CONNECTING;
 bool ota_updating = false;
 String version_string = "CANuSEE " FW_VERSION;
 
 // ==== OLED (U8g2) ====
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 const int centerX = 64;
-const int screenNumbers = 9; // Écrans inutiles retirés
+const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
@@ -76,6 +76,7 @@ float mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, turboPressureState = 0.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
+// Variables pour le Chrono 0-100
 bool timerRunning = false, timerReady = false;
 unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0, currentSpeed = 0.0;
@@ -146,7 +147,6 @@ unsigned long lastElmRequest = 0;
 uint8_t currentExpectedPID = 0;
 uint32_t packetsReceived = 0;
 
-// Callback non-bloquant de fin de scan BLE
 void scanCompleteCB(BLEScanResults results)
 {
   scanIsRunning = false;
@@ -295,7 +295,7 @@ void parseOBDResponse(String response, uint8_t pid)
       coolantTemp = A - 40;
       dashCoolant = coolantTemp;
       break;
-    case 0x0B: // Pression MAP (Utilisée comme MAF/Boost)
+    case 0x0B:
       mafPressure = A;
       turboPressureState = (A - 100.0) * 0.01;
       if (turboPressureState < 0)
@@ -307,6 +307,26 @@ void parseOBDResponse(String response, uint8_t pid)
       dashRPM = engineRPM;
       break;
     case 0x0D:
+      // === LOGIQUE DU CHRONOMETRE INTEGREE ICI ===
+      if (A == 0)
+      {
+        timerReady = true;    // Prêt à partir
+        timerRunning = false; // Sécurité pour remettre à zéro
+      }
+      else if (A > 0 && A < TARGET_SPEED && timerReady && !timerRunning)
+      {
+        // Démarrage du chronomètre dès que la vitesse > 0
+        speedTimerStart = millis();
+        timerRunning = true;
+        timerReady = false;
+      }
+      else if (A >= TARGET_SPEED && timerRunning)
+      {
+        // Arrêt du chronomètre quand on atteint la cible
+        lastTimerValue = (millis() - speedTimerStart) / 1000.0;
+        timerRunning = false;
+        timerReady = false;
+      }
       currentSpeed = A;
       break;
     case 0x0F:
@@ -324,16 +344,16 @@ uint8_t getNextSmartPID()
   switch (screenIndex)
   {
   case 0:
-    return 0x0B; // MAP/Air
+    return 0x0B;
   case 1:
-    return 0x0B; // Boost (Calculé à partir du MAP)
+    return 0x0B;
   case 2:
-    return 0x0F; // IAT
+    return 0x0F;
   case 3:
-    return 0x04; // Load
+    return 0x04;
   case 4:
-    return 0x05; // Coolant
-  case 5:        // Dash (Boucle sur les 4 requis)
+    return 0x05;
+  case 5: // Dash
     dashStep = (dashStep + 1) % 4;
     if (dashStep == 0)
       return 0x0B;
@@ -348,7 +368,7 @@ uint8_t getNextSmartPID()
   case 7:
     return 0x0D; // Speed
   default:
-    return 0x0C; // Par défaut, RPM pour garder la connexion active
+    return 0x0C; // Par défaut RPM
   }
 }
 
@@ -379,7 +399,7 @@ void processBLE()
         elmInitStep++;
         if (elmInitStep == 5 && currentState == STATE_CONNECTING)
         {
-          currentState = STATE_GAUGES; // Démarrage terminé, on passe aux jauges !
+          currentState = STATE_GAUGES; // Démarrage terminé !
         }
       }
       else
@@ -419,7 +439,7 @@ void processBLE()
     if (!scanIsRunning)
     {
       scanIsRunning = true;
-      BLEDevice::getScan()->start(2, scanCompleteCB, false); // Scanner Asynchrone !
+      BLEDevice::getScan()->start(2, scanCompleteCB, false);
     }
   }
 }
@@ -582,7 +602,6 @@ void buildMenu()
   menuText[menuSize] = "Brightness";
   menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
 
-  // Seules les 5 premières jauges ont un mode graphique
   if (screenIndex >= 1 && screenIndex <= 4)
   {
     String s = "Type: Text";
@@ -603,7 +622,7 @@ void buildMenu()
     menuAction[menuSize++] = ACT_EDIT_MAX;
   }
   if (screenIndex == 6)
-  { // Index 6 is Timer now
+  {
     menuText[menuSize] = "Target: " + String(TARGET_SPEED);
     menuAction[menuSize++] = ACT_EDIT_SPEED;
   }
@@ -785,18 +804,18 @@ void draw_GaugeScreen(uint8_t index)
 
     if (timerRunning)
     {
-      // On est en train de courir : affiche le temps réel
+      // Chrono en cours : affiche le temps réel
       float currentTime = (millis() - speedTimerStart) / 1000.0;
       drawStringCenter(36, String(currentTime, 2) + " s");
     }
     else if (lastTimerValue > 0)
     {
-      // La course est finie : affiche le dernier score
+      // Chrono terminé : affiche le score enregistré
       drawStringCenter(36, String(lastTimerValue, 2) + " s");
     }
     else
     {
-      // État initial (READY)
+      // À l'arrêt, attend le départ
       drawStringCenter(36, "READY");
     }
 
@@ -807,7 +826,7 @@ void draw_GaugeScreen(uint8_t index)
   case 7:
     draw_InfoText("Speed", currentSpeed, "km/h");
     break;
-  case 8:
+  case 8: // L'écran Diag est bien conservé ici !
   {
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringCenter(8, "BLE OBDBLE STATUS");
@@ -905,6 +924,12 @@ void setup()
   {
     BLEDevice::init("CANuSEE");
     BLEScan *pBLEScan = BLEDevice::getScan();
+
+    // === OPTIMISATION DE VITESSE BLE ===
+    // Force le module à scanner beaucoup plus rapidement (100ms interval, 99ms d'écoute)
+    pBLEScan->setInterval(100);
+    pBLEScan->setWindow(99);
+
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
     pBLEScan->setActiveScan(true);
     doScan = true;
@@ -923,7 +948,6 @@ void loop()
     return;
   }
 
-  // Le moteur BLE tourne toujours en arrière plan (Connecting OU Gauges)
   if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
     processBLE();
 
@@ -1043,8 +1067,6 @@ void loop()
     }
   }
 
-  // ==== RAFFRAICHISSEMENT D'ÉCRAN À 16 FPS (60ms) ====
-  // Cela permet à l'ESP32 de traiter le BLE à 100% de ses capacités entre deux images
   static unsigned long lastDrawTime = 0;
   if (millis() - lastDrawTime > 60)
   {
