@@ -339,6 +339,7 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
+// ==== SMART POLLING : Demande uniquement ce qui est affiché ====
 uint8_t getNextSmartPID()
 {
   static uint8_t dashStep = 0;
@@ -350,7 +351,7 @@ uint8_t getNextSmartPID()
     return 0x0B;
   case 1:
     boostStep = !boostStep;
-    return boostStep ? 0x0B : 0x70;
+    return boostStep ? 0x0B : 0x70; // Alterne entre Pression Réelle et Cible
   case 2:
     return 0x0F;
   case 3:
@@ -368,11 +369,11 @@ uint8_t getNextSmartPID()
     if (dashStep == 3)
       return 0x0C;
   case 6:
-    return 0x0D;
+    return 0x0D; // Timer (Besoin Vitesse)
   case 7:
-    return 0x0D;
+    return 0x0D; // Speed
   default:
-    return 0x0C;
+    return 0x0C; // Par défaut RPM
   }
 }
 
@@ -388,6 +389,8 @@ void processBLE()
   if (connected)
   {
     bool triggerNextRequest = false;
+
+    // Timeout (Laisse plus de temps pour l'étape 4 de détection auto ATSP0)
     unsigned long timeoutLimit = (elmInitStep == 4) ? 1500 : 500;
     if (!elmResponseReady && (millis() - lastElmRequest > timeoutLimit))
     {
@@ -401,7 +404,7 @@ void processBLE()
         elmInitStep++;
         if (elmInitStep == 5 && currentState == STATE_CONNECTING)
         {
-          currentState = STATE_GAUGES;
+          currentState = STATE_GAUGES; // Démarrage terminé !
         }
       }
       else
@@ -445,6 +448,7 @@ void processBLE()
     }
   }
 }
+// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 void drawStringCenter(int y, String text)
@@ -465,6 +469,7 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
+// ==== HTML Generator : Mise à jour Web UI pour inclure l'option Dial ====
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -521,6 +526,7 @@ void loadValues()
 {
   EEPROM.get(0, cfg);
   screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
+  // Correction ici : Autoriser jusqu'à 2 (0=Texte, 1=Graph, 2=Dial)
   BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type <= 2) ? cfg.boost_screen_type : 0;
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
@@ -756,6 +762,7 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
+  // Ligne pointillée pour la pression cible (Target)
   if (targetValue > -999.0)
   {
     double t_val = constrain(targetValue, minValue, maxValue);
@@ -779,12 +786,14 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
 void draw_RoundGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
   int cx = 64;
-  int cy = 52;
-  int r = 40;
+  int cy = 48; // Relevé de 4 pixels pour laisser de l'espace au texte central !
+  int r = 38;  // Légèrement rétréci pour conserver de la marge en haut
 
+  // Label en haut
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(8, label);
 
+  // Traits du cadran (Ticks) avec correction mathématique
   for (int i = 0; i <= 10; i++)
   {
     float a = PI - (i * PI / 10.0);
@@ -798,9 +807,12 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
     u8g2.drawLine(x1, y1, x2, y2);
   }
 
-  drawStringLeft(0, 58, String(minValue, 1));
-  drawStringRight(128, 58, String(maxValue, 1));
+  // Textes Min/Max remontés sur l'axe horizontal du cadran (Y=48)
+  // Ils sont désormais à l'opposé du numéro d'écran (qui sera à Y=60)
+  drawStringLeft(0, 48, String(minValue, 1));
+  drawStringRight(128, 48, String(maxValue, 1));
 
+  // Valeur Centrale Actuelle tout en bas (Y=64) : ne touche plus l'axe à Y=48
   u8g2.setFont(u8g2_font_helvR12_tr);
   drawStringCenter(64, String(value, 1) + " " + unit);
 
@@ -818,8 +830,9 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
   int by2 = cy - sin(aRight) * 6;
 
   u8g2.drawTriangle(nx, ny, bx1, by1, bx2, by2);
-  u8g2.drawCircle(cx, cy, 3);
+  u8g2.drawCircle(cx, cy, 3); // Axe central
 
+  // Curseur Cible (Petit rond sur le bord du cadran)
   if (targetValue > -999.0)
   {
     float t_val = constrain(targetValue, minValue, maxValue);
@@ -959,6 +972,7 @@ void startServer()
       if (server.hasArg("iat_gauge_type")) IAT_SCREEN = server.arg("iat_gauge_type").toInt();
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+      
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255); setOledBrightness(OLED_BRIGHTNESS);
       saveValues(); server.sendHeader("Location", "/"); server.send(303); });
   server.on("/api/state", HTTP_GET, []()
@@ -1008,12 +1022,10 @@ void setup()
   // === ISOLATION DU WI-FI ET DU BLUETOOTH ===
   if (currentState == STATE_CONFIG)
   {
-    // MODE CONFIG (MENU MAINTENU) : On allume le WiFi, et UNIQUEMENT le WiFi
     startServer();
   }
   else
   {
-    // MODE ROUTE : On coupe le WiFi matériellement pour ne pas crasher le BLE
     WiFi.mode(WIFI_OFF);
 
     BLEDevice::init("CANuSEE");
@@ -1028,14 +1040,13 @@ void setup()
 
 void loop()
 {
-  // Le serveur Wi-Fi et les mises à jour OTA ne tournent QUE si on est en mode configuration
   if (currentState == STATE_CONFIG)
   {
     server.handleClient();
     ElegantOTA.loop();
     dnsServer.processNextRequest();
     if (ota_updating)
-      return; // Ne bloque la boucle que pendant l'OTA
+      return;
   }
 
   if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
@@ -1051,7 +1062,7 @@ void loop()
     if (currentState == STATE_CONFIG)
       restart_ESP();
     else if (currentState == STATE_CONNECTING)
-      restart_ESP(); // Force le redémarrage (le WiFi est coupé, on ne peut pas passer en config à la volée)
+      restart_ESP();
     else if (currentState == STATE_GAUGES)
     {
       buildMenu();
@@ -1121,7 +1132,6 @@ void loop()
         currentState = STATE_GAUGES;
       else if (action == ACT_ENTER_CONFIG)
       {
-        // Pour rentrer en config, l'utilisateur doit maintenir le bouton MENU au démarrage pour ne pas crasher le BLE
         u8g2.clearBuffer();
         drawStringCenter(30, "Hold MENU & Reboot");
         u8g2.sendBuffer();
