@@ -55,7 +55,7 @@ enum AppState
   STATE_CONNECTING,
   STATE_GAUGES,
   STATE_MENU,
-  STATE_STYLE_MENU, // NOUVEAU: État pour le sous-menu de style
+  STATE_STYLE_MENU,
   STATE_EDIT_MIN,
   STATE_EDIT_MAX,
   STATE_EDIT_SPEED,
@@ -73,7 +73,7 @@ const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
-float mapPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
+float mapPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
@@ -100,7 +100,7 @@ int menuSize = 0, menuCursor = 0;
 #define ACT_SET_STYLE_GRAPH 32
 #define ACT_SET_STYLE_DIAL 33
 
-const char *screenNames[] = {"MAP/Air", "Boost", "IAT", "Load", "Coolant", "Dash", "Timer", "Speed", "BLE"};
+const char *screenNames[] = {"MAP/MAF", "Boost", "IAT", "Load", "Coolant", "Dash", "Timer", "Speed", "BLE"};
 
 struct Button
 {
@@ -301,17 +301,12 @@ void parseOBDResponse(String response, uint8_t pid)
       coolantTemp = A - 40;
       dashCoolant = coolantTemp;
       break;
-    case 0x0B: // Pression MAP (Collecteur)
+    case 0x0B: // Pression MAP (Collecteur en kPa)
       mapPressure = A;
       turboPressureState = (A - 100.0) * 0.01;
       if (turboPressureState < 0)
         turboPressureState = 0;
       dashBoost = turboPressureState;
-      break;
-    case 0x70: // Commanded Boost Pressure (Pression cible)
-      targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
-      if (targetBoost < 0)
-        targetBoost = 0;
       break;
     case 0x0C:
       engineRPM = ((A * 256.0) + B) / 4.0;
@@ -341,6 +336,14 @@ void parseOBDResponse(String response, uint8_t pid)
       intakeTemp = A - 40;
       dashIAT = intakeTemp;
       break;
+    case 0x10: // Débitmètre MAF (en g/s)
+      mafPressure = ((A * 256.0) + B) / 100.0;
+      break;
+    case 0x70: // Commanded Boost Pressure (Pression cible turbo)
+      targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
+      if (targetBoost < 0)
+        targetBoost = 0;
+      break;
     }
   }
 }
@@ -350,11 +353,13 @@ uint8_t getNextSmartPID()
 {
   static uint8_t dashStep = 0;
   static uint8_t boostStep = 0;
+  static uint8_t airStep = 0;
 
   switch (screenIndex)
   {
   case 0:
-    return 0x0B;
+    airStep = !airStep;
+    return airStep ? 0x0B : 0x10; // Alterne entre MAP (kPa) et MAF (g/s)
   case 1:
     boostStep = !boostStep;
     return boostStep ? 0x0B : 0x70; // Alterne Pression Réelle et Cible
@@ -476,7 +481,7 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
-// Nettoyage Web UI
+// Nettoyage Web UI (Ajout du support MAP/MAF pour la simulation JS)
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -485,6 +490,19 @@ String generateWebPage()
   String html = file.readString();
   file.close();
   html.reserve(html.length() + 1024);
+
+  // Remplacement dynamique du JavaScript pour simuler le double écran
+  html.replace(
+      "case 0: value = data.map; break;",
+      "/* Modifié dynamiquement pour Screen 0 */");
+
+  html.replace(
+      "if (data.screen >= 0 && data.screen <= 4 || data.screen == 7) {",
+      "if (data.screen === 0) {\n"
+      "                drawCenterText(\"MAP: \" + Number(data.map).toFixed(0) + \" kPa\", 32);\n"
+      "                drawCenterText(\"MAF: \" + Number(data.maf).toFixed(1) + \" g/s\", 48);\n"
+      "            } else if (data.screen >= 1 && data.screen <= 4 || data.screen == 7) {");
+
   html.replace("%MIN%", String(TURBO_MIN_BAR));
   html.replace("%MAX%", String(TURBO_MAX_BAR));
   html.replace("%VERSION%", version_string);
@@ -880,7 +898,12 @@ void draw_GaugeScreen(uint8_t index)
   switch (index)
   {
   case 0:
-    draw_InfoText("MAP Pressure", mapPressure, "kPa");
+    // NOUVEL ÉCRAN : Affichage double MAP(kPa) et MAF(g/s)
+    draw_BottomText(version_string);
+    draw_ScreenNumber(screenIndex);
+    u8g2.setFont(u8g2_font_helvR12_tr);
+    drawStringCenter(16, "MAP : " + String((int)mapPressure) + " kPa");
+    drawStringCenter(36, "MAF : " + String(mafPressure, 1) + " g/s");
     break;
   case 1:
     if (BOOST_SCREEN == 0)
@@ -1009,7 +1032,7 @@ void startServer()
       saveValues(); server.sendHeader("Location", "/"); server.send(303); });
   server.on("/api/state", HTTP_GET, []()
             {
-      String json = "{\"screen\":" + String(screenIndex) + ",\"map\":" + String(mapPressure) + ",\"boost\":" + String(turboPressureState) + 
+      String json = "{\"screen\":" + String(screenIndex) + ",\"map\":" + String(mapPressure) + ",\"maf\":" + String(mafPressure) + ",\"boost\":" + String(turboPressureState) + 
                     ",\"iat\":" + String(intakeTemp) + ",\"load\":" + String(engineLoad) + 
                     ",\"coolant\":" + String(coolantTemp) + ",\"speed\":" + String(currentSpeed) + ",\"boost_mode\":" + String(BOOST_SCREEN) + 
                     ",\"min_boost\":" + String(TURBO_MIN_BAR) + ",\"max_boost\":" + String(TURBO_MAX_BAR) + ",\"brightness\":" + String(OLED_BRIGHTNESS) + "}";
