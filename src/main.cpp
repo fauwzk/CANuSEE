@@ -586,19 +586,27 @@ void draw_InfoText(String title, double value, String unit)
 
 void drawConnectingScreen()
 {
-  u8g2.setFont(u8g2_font_helvR12_tr);
-  drawStringCenter(16, "CONNECTING");
-  u8g2.drawLine(0, 20, 128, 20);
+  // Affichage du logo 3008 en fond pendant toute la connexion
+  u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
+  // Rectangle noir en bas pour masquer le bas du logo et écrire le statut proprement
+  u8g2.setDrawColor(0);
+  u8g2.drawBox(0, 44, 128, 20);
+  u8g2.setDrawColor(1);
+
+  // Affichage du statut Bluetooth
   u8g2.setFont(u8g2_font_helvR08_tr);
-  drawStringCenter(36, bleStatusStr);
+  drawStringCenter(52, bleStatusStr);
 
+  // Affichage de l'avancement de l'initialisation
   if (connected)
   {
-    drawStringCenter(48, "Init Step: " + String(elmInitStep) + "/5");
+    drawStringCenter(62, "Init Step: " + String(elmInitStep) + "/5");
   }
-
-  draw_BottomText(version_string);
+  else
+  {
+    drawStringCenter(62, "Searching OBD...");
+  }
 }
 
 void buildMenu()
@@ -1001,13 +1009,12 @@ void setup()
   loadValues();
   setOledBrightness(OLED_BRIGHTNESS);
 
+  // Le logo est affiché ici au démarrage, mais l'écran de connexion
+  // (drawConnectingScreen) prendra le relais de manière fluide juste après.
   u8g2.clearBuffer();
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-  draw_BottomText(version_string);
+  draw_BottomText("Demarrage...");
   u8g2.sendBuffer();
-
-  // Petite pause après le logo
-  delay(1500);
 
   if (!LittleFS.begin())
   {
