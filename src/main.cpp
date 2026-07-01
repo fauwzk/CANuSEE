@@ -295,14 +295,14 @@ void parseOBDResponse(String response, uint8_t pid)
       coolantTemp = A - 40;
       dashCoolant = coolantTemp;
       break;
-    case 0x0B: // Pression MAP (Collecteur)
+    case 0x0B:
       mapPressure = A;
       turboPressureState = (A - 100.0) * 0.01;
       if (turboPressureState < 0)
         turboPressureState = 0;
       dashBoost = turboPressureState;
       break;
-    case 0x70: // Commanded Boost Pressure (Pression cible)
+    case 0x70:
       targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
       if (targetBoost < 0)
         targetBoost = 0;
@@ -339,7 +339,6 @@ void parseOBDResponse(String response, uint8_t pid)
   }
 }
 
-// ==== SMART POLLING : Demande uniquement ce qui est affiché ====
 uint8_t getNextSmartPID()
 {
   static uint8_t dashStep = 0;
@@ -351,14 +350,14 @@ uint8_t getNextSmartPID()
     return 0x0B;
   case 1:
     boostStep = !boostStep;
-    return boostStep ? 0x0B : 0x70; // Alterne entre Pression Réelle et Cible
+    return boostStep ? 0x0B : 0x70;
   case 2:
     return 0x0F;
   case 3:
     return 0x04;
   case 4:
     return 0x05;
-  case 5: // Dash
+  case 5:
     dashStep = (dashStep + 1) % 4;
     if (dashStep == 0)
       return 0x0B;
@@ -369,11 +368,11 @@ uint8_t getNextSmartPID()
     if (dashStep == 3)
       return 0x0C;
   case 6:
-    return 0x0D; // Timer (Besoin Vitesse)
+    return 0x0D;
   case 7:
-    return 0x0D; // Speed
+    return 0x0D;
   default:
-    return 0x0C; // Par défaut RPM
+    return 0x0C;
   }
 }
 
@@ -390,7 +389,6 @@ void processBLE()
   {
     bool triggerNextRequest = false;
 
-    // Timeout (Laisse plus de temps pour l'étape 4 de détection auto ATSP0)
     unsigned long timeoutLimit = (elmInitStep == 4) ? 1500 : 500;
     if (!elmResponseReady && (millis() - lastElmRequest > timeoutLimit))
     {
@@ -404,7 +402,7 @@ void processBLE()
         elmInitStep++;
         if (elmInitStep == 5 && currentState == STATE_CONNECTING)
         {
-          currentState = STATE_GAUGES; // Démarrage terminé !
+          currentState = STATE_GAUGES;
         }
       }
       else
@@ -448,7 +446,6 @@ void processBLE()
     }
   }
 }
-// ==========================================
 
 void setOledBrightness(uint8_t b) { u8g2.setContrast(b); }
 void drawStringCenter(int y, String text)
@@ -469,7 +466,6 @@ void drawStringRight(int x, int y, String text)
   u8g2.print(text);
 }
 
-// ==== HTML Generator : Mise à jour Web UI pour inclure l'option Dial ====
 String generateWebPage()
 {
   File file = LittleFS.open("/index.html", "r");
@@ -526,7 +522,6 @@ void loadValues()
 {
   EEPROM.get(0, cfg);
   screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
-  // Correction ici : Autoriser jusqu'à 2 (0=Texte, 1=Graph, 2=Dial)
   BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type <= 2) ? cfg.boost_screen_type : 0;
   TURBO_MIN_BAR = cfg.turbo_min;
   TURBO_MAX_BAR = cfg.turbo_max;
@@ -762,7 +757,6 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
   }
 
-  // Ligne pointillée pour la pression cible (Target)
   if (targetValue > -999.0)
   {
     double t_val = constrain(targetValue, minValue, maxValue);
@@ -786,14 +780,12 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
 void draw_RoundGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
   int cx = 64;
-  int cy = 48; // Relevé de 4 pixels pour laisser de l'espace au texte central !
-  int r = 38;  // Légèrement rétréci pour conserver de la marge en haut
+  int cy = 48;
+  int r = 38;
 
-  // Label en haut
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(8, label);
 
-  // Traits du cadran (Ticks) avec correction mathématique
   for (int i = 0; i <= 10; i++)
   {
     float a = PI - (i * PI / 10.0);
@@ -807,12 +799,9 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
     u8g2.drawLine(x1, y1, x2, y2);
   }
 
-  // Textes Min/Max remontés sur l'axe horizontal du cadran (Y=48)
-  // Ils sont désormais à l'opposé du numéro d'écran (qui sera à Y=60)
   drawStringLeft(0, 48, String(minValue, 1));
   drawStringRight(128, 48, String(maxValue, 1));
 
-  // Valeur Centrale Actuelle tout en bas (Y=64) : ne touche plus l'axe à Y=48
   u8g2.setFont(u8g2_font_helvR12_tr);
   drawStringCenter(64, String(value, 1) + " " + unit);
 
@@ -830,9 +819,8 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
   int by2 = cy - sin(aRight) * 6;
 
   u8g2.drawTriangle(nx, ny, bx1, by1, bx2, by2);
-  u8g2.drawCircle(cx, cy, 3); // Axe central
+  u8g2.drawCircle(cx, cy, 3);
 
-  // Curseur Cible (Petit rond sur le bord du cadran)
   if (targetValue > -999.0)
   {
     float t_val = constrain(targetValue, minValue, maxValue);
@@ -950,10 +938,12 @@ void draw_GaugeScreen(uint8_t index)
 
 void startCaptivePortal()
 {
-  WiFi.softAP(ssid, NULL);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+  WiFi.softAP(ssid);
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   server.onNotFound([]()
-                    { server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); });
+                    { server.sendHeader("Location", "/", true); server.send(302, "text/plain", ""); });
 }
 
 void startServer()
@@ -991,11 +981,16 @@ void startServer()
 void setup()
 {
   Serial.begin(115200);
+
+  // FIX BOOTLOOP: Pause de 2 secondes avant d'initialiser les boutons.
+  // Allume ton module sans rien toucher, et attends une seconde avant
+  // d'appuyer sur le bouton MENU pour ne pas faire crasher le processeur.
+  delay(2000);
+
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DOWN, INPUT_PULLUP);
   pinMode(BTN_OK, INPUT_PULLUP);
   pinMode(BTN_MENU, INPUT_PULLUP);
-  delay(500);
 
   if (digitalRead(BTN_MENU) == LOW)
     currentState = STATE_CONFIG;
@@ -1010,6 +1005,8 @@ void setup()
   u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
   draw_BottomText(version_string);
   u8g2.sendBuffer();
+
+  // Petite pause après le logo
   delay(1500);
 
   if (!LittleFS.begin())
@@ -1019,15 +1016,10 @@ void setup()
     restart_ESP();
   }
 
-  // === ISOLATION DU WI-FI ET DU BLUETOOTH ===
-  if (currentState == STATE_CONFIG)
-  {
-    startServer();
-  }
-  else
-  {
-    WiFi.mode(WIFI_OFF);
+  startServer();
 
+  if (currentState != STATE_CONFIG)
+  {
     BLEDevice::init("CANuSEE");
     BLEScan *pBLEScan = BLEDevice::getScan();
     pBLEScan->setInterval(100);

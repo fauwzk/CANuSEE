@@ -32,9 +32,6 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Get short SHA
-        run: echo "GIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-
       - name: Clean previous build
         run: pio run -t clean
       
@@ -60,19 +57,17 @@ jobs:
         with:
           tag_name: ${{ steps.sha.outputs.short }}
           name: Build ${{ steps.sha.outputs.short }}
-          files: release/*
+          files: release/*.zip
 
       - name: Send Discord Webhook
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_SECRET }}
         run: |
-          # 1. Construct the predictable GitHub Release URLs
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.sha.outputs.short }}"
           FW_URL="$BASE_URL/firmware-${{ steps.sha.outputs.short }}.bin"
           FS_URL="$BASE_URL/littlefs-${{ steps.sha.outputs.short }}.bin"
           ZIP_URL="$BASE_URL/firm_fs-${{ steps.sha.outputs.short }}.zip"
 
-          # 2. Fire the cURL request to Discord
           curl -H "Content-Type: application/json" \
                -d "{
                  \"username\": \"GitHub Actions\",
