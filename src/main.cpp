@@ -760,8 +760,8 @@ void drawConfigScreen()
   u8g2.drawLine(0, 18, 128, 18);
   u8g2.setFont(u8g2_font_helvR08_tr);
   drawStringCenter(30, "WiFi: " + String(ssid));
-  drawStringCenter(42, "IP: 192.168.4.1");
-  draw_BottomText("Appui Menu pour Quitter");
+  drawStringCenter(42, "MDP: 12345678"); // Affiche le mot de passe à l'écran
+  draw_BottomText("192.168.4.1");        // Affiche l'adresse IP en bas
 }
 
 #define AREA_CHART_HISTORY 94
@@ -1057,12 +1057,25 @@ void draw_GaugeScreen(uint8_t index)
 
 void startCaptivePortal()
 {
+  // 1. Coupe le Wi-Fi proprement au lieu du disconnect brutal (Corrige le DHCP 169.x.x.x)
+  WiFi.mode(WIFI_OFF);
+  delay(200);
+
+  // 2. Démarrage en mode Point d'Accès
   WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-  WiFi.softAP(ssid);
-  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-  server.onNotFound([]()
-                    { server.sendHeader("Location", "/", true); server.send(302, "text/plain", ""); });
+  delay(200);
+
+  // 3. Configuration stricte de l'IP
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress netMsk(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, netMsk);
+
+  // 4. Lancement du réseau avec mot de passe
+  WiFi.softAP(ssid, "12345678");
+  delay(500); // Laisse le temps au service DHCP de démarrer
+
+  // 5. Démarrage du DNS pour rediriger TOUTES les requêtes vers l'ESP32
+  dnsServer.start(DNS_PORT, "*", apIP);
 }
 
 void startServer()
@@ -1091,6 +1104,40 @@ void startServer()
                     ",\"coolant\":" + String(coolantTemp) + ",\"speed\":" + String(currentSpeed) + ",\"boost_mode\":" + String(BOOST_SCREEN) + 
                     ",\"min_boost\":" + String(TURBO_MIN_BAR) + ",\"max_boost\":" + String(TURBO_MAX_BAR) + ",\"brightness\":" + String(OLED_BRIGHTNESS) + "}";
       server.send(200, "application/json", json); });
+
+  server.on("/reset", HTTP_GET, []()
+            {
+      server.send(200, "text/plain", "Resetting ESP32...");
+      delay(1000);
+      ESP.restart(); });
+
+  server.on("/reset_config", HTTP_GET, []()
+            {
+      server.send(200, "text/plain", "Resetting Config...");
+      delay(1000);
+      EEPROM.write(0, 0); EEPROM.commit();
+      ESP.restart(); });
+
+  // === ROUTES DU PORTAIL CAPTIF ===
+
+  // Route spécifique requise par Android
+  server.on("/generate_204", HTTP_GET, []()
+            {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
+
+  // Route spécifique requise par Apple / iOS
+  server.on("/hotspot-detect.html", HTTP_GET, []()
+            {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
+
+  // Fallback universel : Redirige *n'importe quelle* page introuvable vers l'adresse absolue de l'ESP
+  server.onNotFound([]()
+                    {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
+
   ElegantOTA.begin(&server);
   ElegantOTA.onStart([]()
                      { ota_updating = true; u8g2.clearBuffer(); u8g2.setFont(u8g2_font_helvR12_tr); drawStringCenter(35, "OTA UPDATING"); draw_BottomText("Ne pas debrancher"); u8g2.sendBuffer(); });
