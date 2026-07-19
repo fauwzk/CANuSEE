@@ -666,23 +666,23 @@ void buildMenu()
 {
     menuSize = 0;
 
-    // 1. L'action la plus utile d'abord : Changer le style de la jauge actuelle
+    // 1. L'action la plus utile en premier : Changer le style
     if (screenIndex >= 1 && screenIndex <= 4)
     {
-        menuText[menuSize] = "Gauge Style";
+        menuText[menuSize] = "Gauge Style ->";
         menuAction[menuSize++] = ACT_OPEN_STYLE_MENU;
     }
 
-    // 2. Changer d'écran (On saute l'écran actuellement affiché pour alléger la liste)
+    // 2. Raccourcis vers les autres écrans
     for (int i = 0; i < screenNumbers; i++)
     {
         if (i == screenIndex)
-            continue; // Pas besoin de proposer l'écran actuel
+            continue;
         menuText[menuSize] = "-> " + String(screenNames[i]);
         menuAction[menuSize++] = ACT_GO_SCREEN_0 + i;
     }
 
-    // 3. Réglages spécifiques à l'écran
+    // 3. Réglages spécifiques
     if (screenIndex == 1)
     {
         menuText[menuSize] = "Edit Min Boost";
@@ -690,24 +690,25 @@ void buildMenu()
         menuText[menuSize] = "Edit Max Boost";
         menuAction[menuSize++] = ACT_EDIT_MAX;
     }
+
     if (screenIndex == 6)
     {
         menuText[menuSize] = "Target Speed";
         menuAction[menuSize++] = ACT_EDIT_SPEED;
     }
 
-    // 4. Réglages Système
+    // 4. Paramètres Système
     menuText[menuSize] = "Brightness";
     menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
 
     menuText[menuSize] = "Mode Config Wi-Fi";
     menuAction[menuSize++] = ACT_ENTER_CONFIG;
 
-    // 5. Quitter le menu (en tout dernier, car le bouton physique Menu fait déjà ça !)
+    // 5. Quitter tout en bas de la liste
     menuText[menuSize] = "Exit Menu";
     menuAction[menuSize++] = ACT_CLOSE;
 
-    menuCursor = 0; // Le curseur commence sur la 1ère option (qui n'est plus Exit !)
+    menuCursor = 0; // On commence par la première option (Gauge Style)
 }
 
 void buildStyleMenu()
@@ -724,6 +725,7 @@ void buildStyleMenu()
     else if (screenIndex == 4)
         currentType = COOLANT_SCREEN;
 
+    // 1. Les options de style d'abord
     menuText[menuSize] = (currentType == 0) ? "[X] Text" : "[ ] Text";
     menuAction[menuSize++] = ACT_SET_STYLE_TEXT;
 
@@ -736,76 +738,55 @@ void buildStyleMenu()
     menuText[menuSize] = (currentType == 3) ? "[X] Bar" : "[ ] Bar";
     menuAction[menuSize++] = ACT_SET_STYLE_BAR;
 
+    // 2. Le bouton retour en bas
     menuText[menuSize] = "<- Back";
     menuAction[menuSize++] = ACT_BACK_TO_MENU;
 
-    // Révolution d'UX : on place le curseur sur le style que tu utilises actuellement !
+    // Révolution UX : Le curseur se met directement sur ton style actuel
     menuCursor = currentType;
-}
-
-void drawMenuIcon(int action)
-{
-    if (action == ACT_CLOSE || action == ACT_BACK_TO_MENU)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_arrow_4x_t);
-        u8g2.drawGlyph(48, 42, 67); // Flèche Retour
-    }
-    else if (action == ACT_ENTER_CONFIG)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
-        u8g2.drawGlyph(48, 42, 69); // Engrenage
-    }
-    else if (action == ACT_EDIT_BRIGHTNESS)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_thing_4x_t);
-        u8g2.drawGlyph(48, 42, 72); // Soleil
-    }
-    else if (action == ACT_EDIT_SPEED)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_play_4x_t);
-        u8g2.drawGlyph(48, 42, 79); // Chrono
-    }
-    else if (action == ACT_EDIT_MIN || action == ACT_EDIT_MAX)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_arrow_4x_t);
-        u8g2.drawGlyph(48, 42, 80); // Flèche redimensionnement
-    }
-    else if (action >= ACT_GO_SCREEN_0 && action < ACT_BACK_TO_MENU)
-    {
-        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
-        u8g2.drawGlyph(48, 42, 73); // Ecran
-    }
-    else
-    {
-        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
-        u8g2.drawGlyph(48, 42, 65); // Menu Liste (pour les styles par défaut)
-    }
 }
 
 void drawMenuScreen()
 {
-    // Titre en haut
+    u8g2.setFont(u8g2_font_helvR10_tr);
+    // Affichage dynamique du titre pour bien distinguer Menu et Sous-menu
+    drawStringCenter(12, currentState == STATE_STYLE_MENU ? "STYLE" : "MENU");
+    u8g2.drawLine(0, 14, 128, 14);
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(8, currentState == STATE_STYLE_MENU ? "STYLE" : "MENU");
-    u8g2.drawLine(0, 10, 128, 10);
 
-    // Indicateur HAUT
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(16, "^");
+    int visibleItems = 3;
+    // Calcul pour garder l'élément sélectionné visible (au centre si possible)
+    int startIdx = menuCursor - 1;
+    if (startIdx < 0)
+        startIdx = 0;
+    if (startIdx > menuSize - visibleItems)
+        startIdx = menuSize - visibleItems;
+    if (startIdx < 0)
+        startIdx = 0;
 
-    // Grande icône centrale
-    drawMenuIcon(menuAction[menuCursor]);
+    for (int i = 0; i < visibleItems; i++)
+    {
+        int itemIdx = startIdx + i;
+        if (itemIdx >= menuSize)
+            break;
 
-    // Indicateur BAS
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(48, "v");
+        int yPos = 26 + (i * 12); // Espacement plus aéré
 
-    // Nom de l'option + Indicateur de validation (OK>)
-    u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(62, menuText[menuCursor]);
+        if (itemIdx == menuCursor)
+        {
+            // Surlignage inversé pour la sélection
+            u8g2.setDrawColor(1);
+            u8g2.drawBox(4, yPos - 10, 120, 13);
+            u8g2.setDrawColor(0);
+        }
+        else
+        {
+            u8g2.setDrawColor(1);
+        }
 
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringRight(128, 62, "OK>");
+        drawStringCenter(yPos, menuText[itemIdx]);
+        u8g2.setDrawColor(1); // Reset de la couleur
+    }
 }
 
 void drawEditScreen(String title, String valueStr, String instruction)
