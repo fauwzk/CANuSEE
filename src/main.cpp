@@ -11,9 +11,6 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
-// === INCLUSION DES ICONES DU MENU ===
-#include "menu_icons.h"
-
 // ==== BLE Libraries ====
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -109,31 +106,51 @@ const char *screenNames[] = {"MAP/MAF", "Boost", "IAT", "Load", "Coolant", "Dash
 struct Button
 {
     uint8_t pin;
-    bool state;
-    bool lastState;
-    unsigned long lastDebounceTime;
+    bool state = false;
+    bool lastReading = false;
+    unsigned long lastDebounceTime = 0;
+
+    // Ajout du constructeur explicite pour le compilateur C++
+    Button(uint8_t p)
+    {
+        pin = p;
+    }
+
     bool pressed()
     {
         bool reading = (digitalRead(pin) == LOW);
-        if (reading != lastState)
+        bool trigger = false;
+
+        // Si l'état brut change, on reset le chrono anti-rebond
+        if (reading != lastReading)
+        {
             lastDebounceTime = millis();
-        lastState = reading;
+        }
+
+        // Si l'état est stable depuis 50ms
         if ((millis() - lastDebounceTime) > 50)
         {
+            // Si ce nouvel état stable est différent de notre état enregistré
             if (reading != state)
             {
                 state = reading;
-                return state;
+                // On ne déclenche "true" qu'au moment précis de l'appui
+                if (state == true)
+                {
+                    trigger = true;
+                }
             }
         }
-        return false;
+        lastReading = reading;
+        return trigger;
     }
 };
 
-Button btnUp = {BTN_UP, false, false, 0};
-Button btnDown = {BTN_DOWN, false, false, 0};
-Button btnOk = {BTN_OK, false, false, 0};
-Button btnMenu = {BTN_MENU, false, false, 0};
+// Utilisation des parenthèses au lieu des accolades
+Button btnUp(BTN_UP);
+Button btnDown(BTN_DOWN);
+Button btnOk(BTN_OK);
+Button btnMenu(BTN_MENU);
 
 // =========================================================
 // ==== MOTEUR BLE ULTRA-RAPIDE (Spécifique OBDBLE FFF0) ====
@@ -305,7 +322,7 @@ void parseOBDResponse(String response, uint8_t pid)
             coolantTemp = A - 40;
             dashCoolant = coolantTemp;
             break;
-        case 0x0B:
+        case 0x0B: // Pression MAP (Collecteur en kPa)
             mapPressure = A;
             turboPressureState = (A - 100.0) * 0.01;
             if (turboPressureState < 0)
@@ -340,10 +357,10 @@ void parseOBDResponse(String response, uint8_t pid)
             intakeTemp = A - 40;
             dashIAT = intakeTemp;
             break;
-        case 0x10:
+        case 0x10: // Débitmètre MAF (en g/s)
             mafPressure = ((A * 256.0) + B) / 100.0;
             break;
-        case 0x70:
+        case 0x70: // Commanded Boost Pressure (Pression cible turbo)
             targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
             if (targetBoost < 0)
                 targetBoost = 0;
@@ -352,6 +369,7 @@ void parseOBDResponse(String response, uint8_t pid)
     }
 }
 
+// ==== SMART POLLING : Demande uniquement ce qui est affiché ====
 uint8_t getNextSmartPID()
 {
     static uint8_t dashStep = 0;
@@ -362,17 +380,17 @@ uint8_t getNextSmartPID()
     {
     case 0:
         airStep = !airStep;
-        return airStep ? 0x0B : 0x10;
+        return airStep ? 0x0B : 0x10; // Alterne entre MAP (kPa) et MAF (g/s)
     case 1:
         boostStep = !boostStep;
-        return boostStep ? 0x0B : 0x70;
+        return boostStep ? 0x0B : 0x70; // Alterne Pression Réelle et Cible
     case 2:
         return 0x0F;
     case 3:
         return 0x04;
     case 4:
         return 0x05;
-    case 5:
+    case 5: // Dash
         dashStep = (dashStep + 1) % 4;
         if (dashStep == 0)
             return 0x0B;
@@ -383,11 +401,11 @@ uint8_t getNextSmartPID()
         if (dashStep == 3)
             return 0x0C;
     case 6:
-        return 0x0D;
+        return 0x0D; // Timer (Besoin Vitesse)
     case 7:
-        return 0x0D;
+        return 0x0D; // Speed
     default:
-        return 0x0C;
+        return 0x0C; // Par défaut RPM
     }
 }
 
@@ -404,6 +422,7 @@ void processBLE()
     {
         bool triggerNextRequest = false;
 
+        // Timeout (Laisse plus de temps pour l'étape 4 de détection auto ATSP0)
         unsigned long timeoutLimit = (elmInitStep == 4) ? 1500 : 500;
         if (!elmResponseReady && (millis() - lastElmRequest > timeoutLimit))
         {
@@ -417,7 +436,7 @@ void processBLE()
                 elmInitStep++;
                 if (elmInitStep == 5 && currentState == STATE_CONNECTING)
                 {
-                    currentState = STATE_GAUGES;
+                    currentState = STATE_GAUGES; // Démarrage terminé !
                 }
             }
             else
@@ -483,6 +502,7 @@ void drawStringRight(int x, int y, String text)
     u8g2.print(text);
 }
 
+// Nettoyage Web UI (Ajout du support MAP/MAF pour la simulation JS)
 String generateWebPage()
 {
     File file = LittleFS.open("/index.html", "r");
@@ -492,7 +512,11 @@ String generateWebPage()
     file.close();
     html.reserve(html.length() + 1024);
 
-    html.replace("case 0: value = data.map; break;", "/* Modifié dynamiquement pour Screen 0 */");
+    // Remplacement dynamique du JavaScript pour simuler le double écran
+    html.replace(
+        "case 0: value = data.map; break;",
+        "/* Modifié dynamiquement pour Screen 0 */");
+
     html.replace(
         "if (data.screen >= 0 && data.screen <= 4 || data.screen == 7) {",
         "if (data.screen === 0) {\n"
@@ -616,86 +640,79 @@ void draw_InfoText(String title, double value, String unit)
 
 void drawConnectingScreen()
 {
+    // Affichage du logo 3008 en fond pendant toute la connexion
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+
+    // Rectangle noir en bas pour masquer le bas du logo et écrire le statut proprement
     u8g2.setDrawColor(0);
     u8g2.drawBox(0, 44, 128, 20);
     u8g2.setDrawColor(1);
+
+    // Affichage du statut Bluetooth
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(52, bleStatusStr);
 
     if (connected)
+    {
         drawStringCenter(62, "Init Step: " + String(elmInitStep) + "/5");
+    }
     else
+    {
         drawStringCenter(62, "Searching OBD...");
-}
-
-// === NOOUVEAU SYSTEME DE MENU AVEC ICONES ===
-
-const unsigned char *getMenuIcon(int action)
-{
-    if (action == ACT_CLOSE || action == ACT_BACK_TO_MENU)
-        return icon_exit_32;
-    if (action == ACT_ENTER_CONFIG)
-        return icon_gear_32;
-    if (action == ACT_EDIT_BRIGHTNESS)
-        return icon_sun_32;
-    if (action == ACT_OPEN_STYLE_MENU || (action >= ACT_SET_STYLE_TEXT && action <= ACT_SET_STYLE_BAR))
-        return icon_gauge_32;
-    if (action == ACT_EDIT_MIN || action == ACT_EDIT_MAX)
-        return icon_minmax_32;
-    if (action == ACT_EDIT_SPEED)
-        return icon_timer_32;
-    if (action >= ACT_GO_SCREEN_0)
-        return icon_screen_32;
-    return icon_gear_32;
+    }
 }
 
 void buildMenu()
 {
     menuSize = 0;
-    menuText[menuSize] = "Retour Gauges";
-    menuAction[menuSize++] = ACT_CLOSE;
 
+    // 1. L'action la plus utile d'abord : Changer le style de la jauge actuelle
     if (screenIndex >= 1 && screenIndex <= 4)
     {
-        menuText[menuSize] = "Style de Jauge";
+        menuText[menuSize] = "Gauge Style";
         menuAction[menuSize++] = ACT_OPEN_STYLE_MENU;
     }
 
-    menuText[menuSize] = "Luminosite";
-    menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
-
-    if (screenIndex == 1)
-    {
-        menuText[menuSize] = "Min (" + String(TURBO_MIN_BAR, 1) + ")";
-        menuAction[menuSize++] = ACT_EDIT_MIN;
-        menuText[menuSize] = "Max (" + String(TURBO_MAX_BAR, 1) + ")";
-        menuAction[menuSize++] = ACT_EDIT_MAX;
-    }
-
-    if (screenIndex == 6)
-    {
-        menuText[menuSize] = "Cible: " + String(TARGET_SPEED);
-        menuAction[menuSize++] = ACT_EDIT_SPEED;
-    }
-
+    // 2. Changer d'écran (On saute l'écran actuellement affiché pour alléger la liste)
     for (int i = 0; i < screenNumbers; i++)
     {
-        menuText[menuSize] = "Ecran: " + String(screenNames[i]);
+        if (i == screenIndex)
+            continue; // Pas besoin de proposer l'écran actuel
+        menuText[menuSize] = "-> " + String(screenNames[i]);
         menuAction[menuSize++] = ACT_GO_SCREEN_0 + i;
     }
 
-    menuText[menuSize] = "Parametres Web";
+    // 3. Réglages spécifiques à l'écran
+    if (screenIndex == 1)
+    {
+        menuText[menuSize] = "Edit Min Boost";
+        menuAction[menuSize++] = ACT_EDIT_MIN;
+        menuText[menuSize] = "Edit Max Boost";
+        menuAction[menuSize++] = ACT_EDIT_MAX;
+    }
+    if (screenIndex == 6)
+    {
+        menuText[menuSize] = "Target Speed";
+        menuAction[menuSize++] = ACT_EDIT_SPEED;
+    }
+
+    // 4. Réglages Système
+    menuText[menuSize] = "Brightness";
+    menuAction[menuSize++] = ACT_EDIT_BRIGHTNESS;
+
+    menuText[menuSize] = "Mode Config Wi-Fi";
     menuAction[menuSize++] = ACT_ENTER_CONFIG;
 
-    menuCursor = 0;
+    // 5. Quitter le menu (en tout dernier, car le bouton physique Menu fait déjà ça !)
+    menuText[menuSize] = "Exit Menu";
+    menuAction[menuSize++] = ACT_CLOSE;
+
+    menuCursor = 0; // Le curseur commence sur la 1ère option (qui n'est plus Exit !)
 }
 
 void buildStyleMenu()
 {
     menuSize = 0;
-    menuText[menuSize] = "<- Retour";
-    menuAction[menuSize++] = ACT_BACK_TO_MENU;
 
     int currentType = 0;
     if (screenIndex == 1)
@@ -707,16 +724,62 @@ void buildStyleMenu()
     else if (screenIndex == 4)
         currentType = COOLANT_SCREEN;
 
-    menuText[menuSize] = (currentType == 0) ? "[X] Texte" : "[ ] Texte";
+    menuText[menuSize] = (currentType == 0) ? "[X] Text" : "[ ] Text";
     menuAction[menuSize++] = ACT_SET_STYLE_TEXT;
-    menuText[menuSize] = (currentType == 1) ? "[X] Graphe" : "[ ] Graphe";
+
+    menuText[menuSize] = (currentType == 1) ? "[X] Graph" : "[ ] Graph";
     menuAction[menuSize++] = ACT_SET_STYLE_GRAPH;
-    menuText[menuSize] = (currentType == 2) ? "[X] Cadran" : "[ ] Cadran";
+
+    menuText[menuSize] = (currentType == 2) ? "[X] Dial" : "[ ] Dial";
     menuAction[menuSize++] = ACT_SET_STYLE_DIAL;
-    menuText[menuSize] = (currentType == 3) ? "[X] Barres" : "[ ] Barres";
+
+    menuText[menuSize] = (currentType == 3) ? "[X] Bar" : "[ ] Bar";
     menuAction[menuSize++] = ACT_SET_STYLE_BAR;
 
-    menuCursor = 0;
+    menuText[menuSize] = "<- Back";
+    menuAction[menuSize++] = ACT_BACK_TO_MENU;
+
+    // Révolution d'UX : on place le curseur sur le style que tu utilises actuellement !
+    menuCursor = currentType;
+}
+
+void drawMenuIcon(int action)
+{
+    if (action == ACT_CLOSE || action == ACT_BACK_TO_MENU)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_arrow_4x_t);
+        u8g2.drawGlyph(48, 42, 67); // Flèche Retour
+    }
+    else if (action == ACT_ENTER_CONFIG)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
+        u8g2.drawGlyph(48, 42, 69); // Engrenage
+    }
+    else if (action == ACT_EDIT_BRIGHTNESS)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_thing_4x_t);
+        u8g2.drawGlyph(48, 42, 72); // Soleil
+    }
+    else if (action == ACT_EDIT_SPEED)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_play_4x_t);
+        u8g2.drawGlyph(48, 42, 79); // Chrono
+    }
+    else if (action == ACT_EDIT_MIN || action == ACT_EDIT_MAX)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_arrow_4x_t);
+        u8g2.drawGlyph(48, 42, 80); // Flèche redimensionnement
+    }
+    else if (action >= ACT_GO_SCREEN_0 && action < ACT_BACK_TO_MENU)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
+        u8g2.drawGlyph(48, 42, 73); // Ecran
+    }
+    else
+    {
+        u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
+        u8g2.drawGlyph(48, 42, 65); // Menu Liste (pour les styles par défaut)
+    }
 }
 
 void drawMenuScreen()
@@ -726,22 +789,23 @@ void drawMenuScreen()
     drawStringCenter(8, currentState == STATE_STYLE_MENU ? "STYLE" : "MENU");
     u8g2.drawLine(0, 10, 128, 10);
 
-    // Icône Centrée (32x32)
-    int action = menuAction[menuCursor];
-    const unsigned char *icon = getMenuIcon(action);
-    if (icon)
-    {
-        u8g2.drawXBM(48, 14, 32, 32, icon);
-    }
+    // Indicateur HAUT
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(16, "^");
 
-    // Texte Centré en gras en bas
+    // Grande icône centrale
+    drawMenuIcon(menuAction[menuCursor]);
+
+    // Indicateur BAS
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(48, "v");
+
+    // Nom de l'option + Indicateur de validation (OK>)
     u8g2.setFont(u8g2_font_helvB10_tr);
     drawStringCenter(62, menuText[menuCursor]);
 
-    // Flèches Gauche et Droite pour indiquer qu'on peut naviguer
-    u8g2.setFont(u8g2_font_helvB14_tr);
-    drawStringLeft(2, 40, "<");
-    drawStringRight(126, 40, ">");
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringRight(128, 62, "OK>");
 }
 
 void drawEditScreen(String title, String valueStr, String instruction)
@@ -760,8 +824,8 @@ void drawConfigScreen()
     u8g2.drawLine(0, 18, 128, 18);
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(30, "WiFi: " + String(ssid));
-    drawStringCenter(42, "MDP: 12345678");
-    draw_BottomText("192.168.4.1");
+    drawStringCenter(42, "MDP: 12345678"); // Affiche le mot de passe à l'écran
+    draw_BottomText("192.168.4.1");        // Affiche l'adresse IP en bas
 }
 
 #define AREA_CHART_HISTORY 94
@@ -818,13 +882,16 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
         u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
     }
 
+    // Ligne pointillée pour la pression cible (Target)
     if (targetValue > -999.0)
     {
         double t_val = constrain(targetValue, minValue, maxValue);
         int t_height = (int)(chartHeight * ((t_val - minValue) / range));
         int ty = baseY - t_height;
         for (int tx = chartX; tx < chartX + chartWidth; tx += 4)
+        {
             u8g2.drawPixel(tx, ty);
+        }
     }
 
     int maxLabelY = chartY + 8, minLabelY = baseY, valCenterY = chartY + (chartHeight / 2) + 4, alignBorderX = chartX - 2;
@@ -838,11 +905,15 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
 
 void draw_LinearGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
+    // Label en haut
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(8, label);
+
+    // Valeur Centrale Actuelle (très lisible)
     u8g2.setFont(u8g2_font_helvR18_tr);
     drawStringCenter(30, String(value, 1) + " " + unit);
 
+    // Jauge segmentée (Aviation/HUD 3008 style)
     int barX = 4, barY = 40, barW = 120, barH = 14;
     u8g2.drawFrame(barX, barY, barW, barH);
 
@@ -850,103 +921,77 @@ void draw_LinearGauge(double value, double minValue, double maxValue, String lab
     int segments = 23;
     int activeSegs = (int)(((val - minValue) / (maxValue - minValue)) * segments);
     for (int i = 0; i < activeSegs; i++)
+    {
         u8g2.drawBox(barX + 3 + (i * 5), barY + 3, 4, barH - 6);
+    }
 
+    // Textes Min/Max (collés à la jauge en bas)
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringLeft(barX, barY + barH + 9, String(minValue, 1));
     drawStringRight(barX + barW, barY + barH + 9, String(maxValue, 1));
 
+    // Curseur Cible (Petit triangle au dessus)
     if (targetValue > -999.0)
     {
         float t_val = constrain(targetValue, minValue, maxValue);
         int t_x = barX + 2 + (int)(((t_val - minValue) / (maxValue - minValue)) * (barW - 4));
         u8g2.drawTriangle(t_x, barY - 1, t_x - 3, barY - 5, t_x + 3, barY - 5);
     }
+
     draw_ScreenNumber(screenIndex);
 }
 
-// === NOUVEAU CADRAN ROND GEANT (STYLE SPORT) ===
 void draw_RoundGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
     int cx = 64;
-    int cy = 60; // Axe très bas pour faire un arc géant
-    int r = 46;
+    int cy = 60; // On descend le centre pour que l'arc de cercle couvre bien tout l'écran
+    int r = 55;  // Grand rayon
 
-    // Label tout en haut
+    // Texte au centre avec une typo géante !
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(8, label);
+    drawStringCenter(12, label);
 
-    // Cercle extérieur épais (Style Compte-tours)
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    drawStringCenter(46, String(value, 1));
+
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringCenter(60, unit);
+
+    // Arc de cercle épais supérieur
     u8g2.drawCircle(cx, cy, r, U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_UPPER_LEFT);
     u8g2.drawCircle(cx, cy, r - 1, U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_UPPER_LEFT);
 
-    // Seulement 5 Graduations (Ticks) majeures, bien épaisses
-    for (int i = 0; i <= 4; i++)
-    {
-        float a = PI - (i * PI / 4.0);
-        int x1 = cx + cos(a) * r;
-        int y1 = cy - sin(a) * r;
-        int x2 = cx + cos(a) * (r - 6);
-        int y2 = cy - sin(a) * (r - 6);
-
-        u8g2.drawLine(x1, y1, x2, y2);
-        // On double la ligne pour l'épaissir
-        u8g2.drawLine(x1 + 1, y1, x2 + 1, y2);
-    }
-
-    // Min/Max aux extrémités de l'arc
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringLeft(0, 58, String(minValue, 1));
-    drawStringRight(128, 58, String(maxValue, 1));
-
-    // Aiguille (Polygone Plein)
+    // L'aiguille est un "faisceau" qui balaye depuis l'extérieur du texte jusqu'au bord
     float val = constrain(value, minValue, maxValue);
     float angle = PI - ((val - minValue) / (maxValue - minValue)) * PI;
 
-    int nx = cx + cos(angle) * (r - 4); // Pointe de l'aiguille
-    int ny = cy - sin(angle) * (r - 4);
+    int inner_r = 34; // Commence autour du texte, sans le barrer !
+    int nx1 = cx + cos(angle) * inner_r;
+    int ny1 = cy - sin(angle) * inner_r;
+    int nx2 = cx + cos(angle) * r;
+    int ny2 = cy - sin(angle) * r;
 
-    float aLeft = angle + PI / 2.0;
-    float aRight = angle - PI / 2.0;
-    int bx1 = cx + cos(aLeft) * 5; // Base gauche
-    int by1 = cy - sin(aLeft) * 5;
-    int bx2 = cx + cos(aRight) * 5; // Base droite
-    int by2 = cy - sin(aRight) * 5;
+    // Aiguille TRES épaisse pour la voir en conduisant
+    u8g2.drawLine(nx1, ny1, nx2, ny2);
+    u8g2.drawLine(nx1 + 1, ny1, nx2 + 1, ny2);
+    u8g2.drawLine(nx1 - 1, ny1, nx2 - 1, ny2);
 
-    u8g2.drawTriangle(nx, ny, bx1, by1, bx2, by2); // Aiguille solide
+    // Valeurs Min/Max discrètes sur les côtés extrêmes
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringLeft(0, cy, String(minValue, 1));
+    drawStringRight(128, cy, String(maxValue, 1));
 
-    // Cache central sur l'axe
-    u8g2.setDrawColor(0);
-    u8g2.drawDisc(cx, cy, 6);
-    u8g2.setDrawColor(1);
-    u8g2.drawCircle(cx, cy, 6);
-    u8g2.drawDisc(cx, cy, 2);
-
-    // Valeur Numérique et Unité (Effacement du fond pour lisibilité par dessus l'aiguille)
-    String valStr = String(value, 1);
-    u8g2.setFont(u8g2_font_helvB14_tr); // Police GRASSE
-    int textW = u8g2.getStrWidth(valStr.c_str());
-
-    // On crée une boite noire au centre bas pour écrire la valeur parfaitement nette
-    u8g2.setDrawColor(0);
-    u8g2.drawBox(cx - textW / 2 - 2, 45, textW + 4, 16);
-    u8g2.setDrawColor(1);
-
-    drawStringCenter(58, valStr);
-
-    // Unité
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(38, unit);
-
-    // Curseur Cible Extérieur
+    // Curseur Cible (Petit point sur l'arc)
     if (targetValue > -999.0)
     {
         float t_val = constrain(targetValue, minValue, maxValue);
         float t_angle = PI - ((t_val - minValue) / (maxValue - minValue)) * PI;
         int tx = cx + cos(t_angle) * (r + 4);
         int ty = cy - sin(t_angle) * (r + 4);
-        u8g2.drawDisc(tx, ty, 3);
+        u8g2.drawDisc(tx, ty, 2);
     }
+
+    draw_ScreenNumber(screenIndex);
 }
 
 void draw_GaugeScreen(uint8_t index)
@@ -1016,9 +1061,12 @@ void draw_GaugeScreen(uint8_t index)
     case 6:
         draw_BottomText(version_string);
         draw_ScreenNumber(screenIndex);
+
         u8g2.setFont(u8g2_font_helvR12_tr);
         drawStringCenter(14, "0 - " + String(TARGET_SPEED) + " km/h");
+
         u8g2.setFont(u8g2_font_helvR18_tr);
+
         if (timerRunning)
         {
             float currentTime = (millis() - speedTimerStart) / 1000.0;
@@ -1032,6 +1080,7 @@ void draw_GaugeScreen(uint8_t index)
         {
             drawStringCenter(36, "READY");
         }
+
         u8g2.setFont(u8g2_font_helvR08_tr);
         drawStringCenter(46, "Speed: " + String((int)currentSpeed) + " km/h");
         break;
@@ -1039,9 +1088,11 @@ void draw_GaugeScreen(uint8_t index)
         draw_InfoText("Speed", currentSpeed, "km/h");
         break;
     case 8:
+    {
         u8g2.setFont(u8g2_font_5x7_tr);
         drawStringCenter(8, "BLE OBDBLE STATUS");
         u8g2.drawLine(0, 12, 128, 12);
+
         u8g2.setCursor(0, 22);
         u8g2.print("Status: " + bleStatusStr);
         u8g2.setCursor(0, 32);
@@ -1051,8 +1102,10 @@ void draw_GaugeScreen(uint8_t index)
         u8g2.setCursor(0, 52);
         u8g2.print("Buf: ");
         u8g2.print(elmBuffer);
+
         draw_ScreenNumber(screenIndex);
-        break;
+    }
+    break;
     }
 }
 
@@ -1060,13 +1113,17 @@ void startCaptivePortal()
 {
     WiFi.mode(WIFI_OFF);
     delay(200);
+
     WiFi.mode(WIFI_AP);
     delay(200);
+
     IPAddress apIP(192, 168, 4, 1);
     IPAddress netMsk(255, 255, 255, 0);
     WiFi.softAPConfig(apIP, apIP, netMsk);
+
     WiFi.softAP(ssid, "12345678");
     delay(500);
+
     dnsServer.start(DNS_PORT, "*", apIP);
 }
 
@@ -1089,7 +1146,6 @@ void startServer()
       
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255); setOledBrightness(OLED_BRIGHTNESS);
       saveValues(); server.sendHeader("Location", "/"); server.send(303); });
-
     server.on("/api/state", HTTP_GET, []()
               {
       String json = "{\"screen\":" + String(screenIndex) + ",\"map\":" + String(mapPressure) + ",\"maf\":" + String(mafPressure) + ",\"boost\":" + String(turboPressureState) + 
@@ -1101,19 +1157,30 @@ void startServer()
     server.on("/reset", HTTP_GET, []()
               {
       server.send(200, "text/plain", "Resetting ESP32...");
-      delay(1000); ESP.restart(); });
+      delay(1000);
+      ESP.restart(); });
 
     server.on("/reset_config", HTTP_GET, []()
               {
       server.send(200, "text/plain", "Resetting Config...");
-      delay(1000); EEPROM.write(0, 0); EEPROM.commit(); ESP.restart(); });
+      delay(1000);
+      EEPROM.write(0, 0); EEPROM.commit();
+      ESP.restart(); });
 
     server.on("/generate_204", HTTP_GET, []()
-              { server.sendHeader("Location", "http://192.168.4.1/", true); server.send(302, "text/plain", ""); });
+              {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
+
     server.on("/hotspot-detect.html", HTTP_GET, []()
-              { server.sendHeader("Location", "http://192.168.4.1/", true); server.send(302, "text/plain", ""); });
+              {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
+
     server.onNotFound([]()
-                      { server.sendHeader("Location", "http://192.168.4.1/", true); server.send(302, "text/plain", ""); });
+                      {
+      server.sendHeader("Location", "http://192.168.4.1/", true);
+      server.send(302, "text/plain", ""); });
 
     ElegantOTA.begin(&server);
     ElegantOTA.onStart([]()
@@ -1124,6 +1191,8 @@ void startServer()
 void setup()
 {
     Serial.begin(115200);
+
+    // FIX BOOTLOOP: Pause de 2 secondes avant d'initialiser les boutons.
     delay(2000);
 
     pinMode(BTN_UP, INPUT_PULLUP);
@@ -1140,6 +1209,7 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
+    // Affichage du Logo au démarrage
     u8g2.clearBuffer();
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
     draw_BottomText("Demarrage...");
@@ -1154,6 +1224,7 @@ void setup()
         restart_ESP();
     }
 
+    // === ISOLATION DU WI-FI ET DU BLUETOOTH ===
     if (currentState == STATE_CONFIG)
     {
         startServer();
@@ -1161,6 +1232,7 @@ void setup()
     else
     {
         WiFi.mode(WIFI_OFF);
+
         BLEDevice::init("CANuSEE");
         BLEScan *pBLEScan = BLEDevice::getScan();
         pBLEScan->setInterval(100);
@@ -1190,9 +1262,12 @@ void loop()
     bool okPressed = btnOk.pressed();
     bool menuPressed = btnMenu.pressed();
 
+    // Navigation: Touche MENU
     if (menuPressed)
     {
-        if (currentState == STATE_CONFIG || currentState == STATE_CONNECTING)
+        if (currentState == STATE_CONFIG)
+            restart_ESP();
+        else if (currentState == STATE_CONNECTING)
             restart_ESP();
         else if (currentState == STATE_GAUGES)
         {
@@ -1208,6 +1283,7 @@ void loop()
             currentState = STATE_GAUGES;
     }
 
+    // Navigation: Touches HAUT / BAS
     if (upPressed || downPressed)
     {
         int dir = upPressed ? -1 : 1;
@@ -1259,39 +1335,49 @@ void loop()
         }
     }
 
+    // Navigation: Routage Strict de la Touche OK
     if (okPressed)
     {
         if (currentState == STATE_MENU)
         {
             int action = menuAction[menuCursor];
-            if (action == ACT_CLOSE)
-                currentState = STATE_GAUGES;
-            else if (action == ACT_ENTER_CONFIG)
+
+            switch (action)
             {
+            case ACT_CLOSE:
+                currentState = STATE_GAUGES;
+                break;
+            case ACT_OPEN_STYLE_MENU:
+                buildStyleMenu();
+                currentState = STATE_STYLE_MENU;
+                break;
+            case ACT_EDIT_MIN:
+                currentState = STATE_EDIT_MIN;
+                break;
+            case ACT_EDIT_MAX:
+                currentState = STATE_EDIT_MAX;
+                break;
+            case ACT_EDIT_SPEED:
+                currentState = STATE_EDIT_SPEED;
+                break;
+            case ACT_EDIT_BRIGHTNESS:
+                currentState = STATE_EDIT_BRIGHTNESS;
+                break;
+            case ACT_ENTER_CONFIG:
                 u8g2.clearBuffer();
                 drawStringCenter(30, "Hold MENU & Reboot");
                 u8g2.sendBuffer();
                 delay(2000);
                 restart_ESP();
-            }
-            else if (action == ACT_OPEN_STYLE_MENU)
-            {
-                buildStyleMenu();
-                currentState = STATE_STYLE_MENU;
-            }
-            else if (action == ACT_EDIT_MIN)
-                currentState = STATE_EDIT_MIN;
-            else if (action == ACT_EDIT_MAX)
-                currentState = STATE_EDIT_MAX;
-            else if (action == ACT_EDIT_SPEED)
-                currentState = STATE_EDIT_SPEED;
-            else if (action == ACT_EDIT_BRIGHTNESS)
-                currentState = STATE_EDIT_BRIGHTNESS;
-            else if (action >= ACT_GO_SCREEN_0 && action < ACT_BACK_TO_MENU)
-            {
-                screenIndex = action - ACT_GO_SCREEN_0;
-                saveValues();
-                currentState = STATE_GAUGES;
+                break;
+            default:
+                if (action >= ACT_GO_SCREEN_0 && action <= ACT_GO_SCREEN_0 + screenNumbers)
+                {
+                    screenIndex = action - ACT_GO_SCREEN_0;
+                    saveValues();
+                    currentState = STATE_GAUGES;
+                }
+                break;
             }
         }
         else if (currentState == STATE_STYLE_MENU)
@@ -1304,7 +1390,8 @@ void loop()
             }
             else if (action >= ACT_SET_STYLE_TEXT && action <= ACT_SET_STYLE_BAR)
             {
-                int newStyle = action - ACT_SET_STYLE_TEXT;
+                int newStyle = action - ACT_SET_STYLE_TEXT; // Donne 0, 1, 2 ou 3
+
                 if (screenIndex == 1)
                     BOOST_SCREEN = newStyle;
                 else if (screenIndex == 2)
@@ -1313,9 +1400,10 @@ void loop()
                     ENGLOAD_SCREEN = newStyle;
                 else if (screenIndex == 4)
                     COOLANT_SCREEN = newStyle;
+
                 saveValues();
-                buildMenu();
-                currentState = STATE_MENU;
+                // Modification Magique : On retourne directement sur la jauge pour voir le résultat
+                currentState = STATE_GAUGES;
             }
         }
         else if (currentState == STATE_EDIT_MIN || currentState == STATE_EDIT_MAX || currentState == STATE_EDIT_SPEED || currentState == STATE_EDIT_BRIGHTNESS)
@@ -1326,6 +1414,7 @@ void loop()
         }
     }
 
+    // ==== RAFFRAICHISSEMENT D'ÉCRAN À 16 FPS (60ms) ====
     static unsigned long lastDrawTime = 0;
     if (millis() - lastDrawTime > 60)
     {
