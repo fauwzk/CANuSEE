@@ -9,7 +9,7 @@
 #include <DNSServer.h>
 #include "epd_bitmap_logo_3008.h"
 #include <ElegantOTA.h>
-#include "version.h"
+#include "version.h" // Inclut dynamiquement la version via PlatformIO CI
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -508,7 +508,6 @@ void drawStringRight(int x, int y, String text)
     u8g2.print(text);
 }
 
-// Fonction MAGIQUE pour dessiner des icônes vectorielles nettes et 100% automobiles !
 void drawVectorIcon(int cx, int cy, int type)
 {
     switch (type)
@@ -731,7 +730,7 @@ void draw_StatusBar(String title)
     drawStringLeft(0, 8, title);
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringRight(128, 8, String(screenIndex + 1) + "/" + String(screenNumbers));
-    // Nouvelle ligne de séparation de l'OS élégante
+    // Ligne de séparation de l'OS élégante
     u8g2.drawLine(0, 10, 128, 10);
 }
 
@@ -758,7 +757,6 @@ void drawMenuScreen()
     u8g2.setDrawColor(1);
 }
 
-// EditScreen amélioré avec une Slider Bar (pourcentage visuel)
 void drawEditScreen(String title, String valueStr, float progress)
 {
     u8g2.setFont(u8g2_font_helvB10_tr);
@@ -780,6 +778,7 @@ void drawEditScreen(String title, String valueStr, float progress)
     u8g2.setDrawColor(1);
 }
 
+// Nouvel écran de connexion plus dynamique sans le texte moche
 void drawConnectingScreen()
 {
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
@@ -792,21 +791,23 @@ void drawConnectingScreen()
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(52, bleStatusStr);
 
+    u8g2.drawFrame(14, 56, 100, 6);
+
     if (connected)
     {
         // Barre de chargement de l'étape ELM327
-        u8g2.drawFrame(14, 56, 100, 6);
         int fill = (elmInitStep / 5.0) * 96;
-        u8g2.drawBox(16, 58, fill, 2);
+        if (fill > 0)
+            u8g2.drawBox(16, 58, fill, 2);
     }
     else
     {
-        // Animation de points dynamique
-        int dots = (millis() / 500) % 4;
-        String loading = "Searching OBD";
-        for (int i = 0; i < dots; i++)
-            loading += ".";
-        drawStringCenter(62, loading);
+        // Animation fluide de balayage (K2000 style) pour "Searching"
+        int width = 20;
+        int max_x = 96 - width;
+        int pos = (millis() / 15) % (max_x * 2);
+        int xOffset = (pos < max_x) ? pos : (max_x * 2) - pos;
+        u8g2.drawBox(16 + xOffset, 58, width, 2);
     }
 }
 
@@ -856,10 +857,11 @@ String formatDecimal(double value, uint8_t decimals)
     return result;
 }
 
+// Typographie ajustée pour éviter les dépassements (overflow) sur de longues valeurs
 void draw_InfoText(String title, double value, String unit)
 {
     draw_StatusBar(title);
-    u8g2.setFont(u8g2_font_helvB24_tr); // Typo géante libérée de toute contrainte
+    u8g2.setFont(u8g2_font_helvB18_tr); // Changé de 24 à 18
     String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
     drawStringCenter(48, valStr + " " + unit);
 }
@@ -1017,7 +1019,7 @@ void draw_GaugeScreen(uint8_t index)
         break;
     case 5:
         draw_StatusBar("DASHBOARD");
-        u8g2.setFont(u8g2_font_helvB10_tr);
+        u8g2.setFont(u8g2_font_helvB08_tr); // Police ajustée pour éviter l'overflow
         drawStringLeft(0, 32, "BST: " + String(smBoost.val, 1) + "b");
         drawStringLeft(68, 32, "IAT: " + String(smIAT.val, 0) + "C");
         drawStringLeft(0, 56, "LDR: " + String(smCoolant.val, 0) + "C");
@@ -1025,9 +1027,9 @@ void draw_GaugeScreen(uint8_t index)
         break;
     case 6:
         draw_StatusBar("CHRONO");
-        u8g2.setFont(u8g2_font_helvR12_tr);
+        u8g2.setFont(u8g2_font_helvB10_tr); // Typo adaptée
         drawStringCenter(24, "0 - " + String(TARGET_SPEED) + " km/h");
-        u8g2.setFont(u8g2_font_helvB18_tr);
+        u8g2.setFont(u8g2_font_helvB14_tr); // Typo adaptée pour ne pas écraser
         if (timerRunning)
             drawStringCenter(46, String((millis() - speedTimerStart) / 1000.0, 2) + " s");
         else if (lastTimerValue > 0)
@@ -1053,7 +1055,8 @@ void draw_GaugeScreen(uint8_t index)
         u8g2.setCursor(0, 44);
         u8g2.print("Init Step: " + String(elmInitStep) + "/5");
         u8g2.setCursor(0, 54);
-        u8g2.print("Buf: " + elmBuffer);
+        // Troncature du buffer pour éviter la bouillie visuelle
+        u8g2.print("Buf: " + elmBuffer.substring(0, 16));
         break;
     }
 }
