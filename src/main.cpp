@@ -1134,15 +1134,25 @@ void setup()
     // ANIMATION DE DÉMARRAGE : SCANNER LASER CALIBRÉ
     // ==========================================
 
-    // Phase 1 : Scanner Laser vertical rapide
-    for (int h = 0; h <= 64; h += 2)
+    // Le bandeau noir fait 18 pixels (de y=46 à y=64).
+    // Il nous reste donc 46 pixels de haut pour afficher le logo.
+    // Pour centrer verticalement le logo 3008 (qui fait 64px),
+    // on le remonte de 9 pixels (Y = -9). Ainsi, il occupera l'espace de 0 à 46.
+
+    int logoY = -9;
+
+    // Phase 1 : Scanner Laser vertical rapide (uniquement dans la zone du logo)
+    for (int h = 0; h <= 46; h += 2)
     {
         u8g2.clearBuffer();
+
+        // On dessine l'image remontée, rognée à la ligne du laser "h"
         u8g2.setClipWindow(0, 0, 128, h);
-        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        if (h < 64)
+        // Dessine la ligne laser horizontale brillante
+        if (h < 46)
         {
             u8g2.setDrawColor(1);
             u8g2.drawLine(0, h, 128, h);
@@ -1154,16 +1164,19 @@ void setup()
 
     delay(150);
 
-    // Phase 2 : Le bandeau d'information glisse proprement de bas en haut (46 à 64)
+    // Phase 2 : Le bandeau d'information glisse proprement de bas en haut (64 à 46)
     for (int y = 64; y >= 46; y -= 2)
     {
         u8g2.clearBuffer();
-        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
+        // Le logo est maintenant affiché fixement dans sa "fenêtre" (Y = -9)
+        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+
+        // Panneau noir montant
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, y, 128, 64 - y);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, y, 128, y);
+        u8g2.drawLine(0, y, 128, y); // Ligne supérieure de séparation
 
         u8g2.sendBuffer();
         delay(10);
@@ -1173,22 +1186,22 @@ void setup()
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
-        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
 
-        // Bandeau Fixé et Ligne
+        // Bandeau Fixé (18 pixels)
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, 46, 128, 18);
         u8g2.setDrawColor(1);
         u8g2.drawLine(0, 46, 128, 46);
 
-        // Textes ajustés (CANuSEE à gauche, Version à droite)
+        // Textes parfaitement calés
         u8g2.setFont(u8g2_font_helvB08_tr);
         drawStringLeft(4, 55, "CANuSEE");
 
         u8g2.setFont(u8g2_font_5x7_tr);
         drawStringRight(124, 55, version_string);
 
-        // Barre de chargement ultra précise (y:58 à 62, ne touche ni les textes, ni le bas)
+        // Barre de chargement ultra précise (y=58, h=5)
         u8g2.drawFrame(4, 58, 120, 5);
         int barWidth = (i * 116) / 100;
         if (barWidth > 0)
