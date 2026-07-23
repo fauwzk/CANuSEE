@@ -11,16 +11,19 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
+// ==== BLE Libraries ====
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
+// ==== Pins Configuration (4 Boutons) ====
 #define BTN_UP 0
 #define BTN_DOWN 1
 #define BTN_OK 3
 #define BTN_MENU 6
 
+// ==== WiFi Config ====
 const char *ssid = "CANuSEE_Setup";
 WebServer server(80);
 DNSServer dnsServer;
@@ -62,38 +65,61 @@ AppState currentState = STATE_CONNECTING;
 bool ota_updating = false;
 String version_string = "CANuSEE " FW_VERSION;
 
+// ==== OLED (U8g2) Full Buffer (F) ====
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 const int centerX = 64;
 const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
+// Variables OBD brutes
 float mapPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
+// Moteur de lissage (Anti-Escalier / Interpolation)
+struct SmoothData
+{
+    float val;
+    void update(float target)
+    {
+        if (abs(target - val) > (abs(target) * 0.5 + 20.0))
+            val = target; // Raccrochage direct si énorme écart
+        else
+            val += (target - val) * 0.20; // Glissement organique vers la cible
+    }
+};
+SmoothData smBoost = {0}, smIAT = {0}, smLoad = {0}, smCoolant = {0}, smRPM = {0}, smSpeed = {0}, smMAP = {0}, smMAF = {0};
+
+// Variables pour le Chrono 0-100
 bool timerRunning = false, timerReady = false;
 unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0, currentSpeed = 0.0;
+
+// Variables du Moteur de Transition Vidéo
+bool isTransitioning = false;
+int slideOffset = 0;
+int slideDirection = 1; // 1 = Next (Vers la gauche), -1 = Prev (Vers la droite)
+uint8_t oldScreenBuffer[1024];
 
 #define MAX_MENU_ITEMS 10
 struct MenuItem
 {
     const char *text;
     int action;
-    int icon; // 0=None, 1=Return, 2=Gear, 3=Sun, 4=Speed/Chrono, 5=Gauge, 6=Eye
+    int icon; // Font Open Iconic (0=Exit, 1=Settings, 2=Style, 3=Brightness, 4=Arrow, 5=Speed)
 };
 
 MenuItem currentMenu[MAX_MENU_ITEMS];
 int menuSize = 0, menuCursor = 0;
 
-#define ACT_CLOSE 1
-#define ACT_OPEN_STYLE_MENU 2
-#define ACT_EDIT_MIN 3
-#define ACT_EDIT_MAX 4
-#define ACT_EDIT_SPEED 5
-#define ACT_EDIT_BRIGHTNESS 6
-#define ACT_ENTER_CONFIG 7
+#define ACT_CLOSE 0
+#define ACT_OPEN_STYLE_MENU 1
+#define ACT_EDIT_MIN 2
+#define ACT_EDIT_MAX 3
+#define ACT_EDIT_SPEED 4
+#define ACT_EDIT_BRIGHTNESS 5
+#define ACT_ENTER_CONFIG 6
 #define ACT_GO_SCREEN_0 10
 #define ACT_BACK_TO_MENU 30
 #define ACT_SET_STYLE_TEXT 31
@@ -112,7 +138,7 @@ public:
     unsigned long lastDebounceTime;
 
     Button(uint8_t p)
-    {
+    { // Constructeur explicite
         pin = p;
         state = false;
         lastState = false;
@@ -130,7 +156,7 @@ public:
             if (reading != state)
             {
                 state = reading;
-                return state; // Retourne true seulement lors de l'appui
+                return state;
             }
         }
         return false;
@@ -142,14 +168,23 @@ Button btnDown(BTN_DOWN);
 Button btnOk(BTN_OK);
 Button btnMenu(BTN_MENU);
 
+// =========================================================
+// ==== MOTEUR BLE ULTRA-RAPIDE (Spécifique OBDBLE FFF0) ====
+// =========================================================
 static BLEUUID serviceUUID("0000fff0-0000-1000-8000-00805f9b34fb");
-static boolean doConnect = false, connected = false, doScan = false, scanIsRunning = false;
-static BLERemoteCharacteristic *pTxCharacteristic = nullptr, *pRxCharacteristic = nullptr;
+
+static boolean doConnect = false;
+static boolean connected = false;
+static boolean doScan = false;
+static boolean scanIsRunning = false;
+static BLERemoteCharacteristic *pTxCharacteristic = nullptr;
+static BLERemoteCharacteristic *pRxCharacteristic = nullptr;
 static BLEAdvertisedDevice *myDevice;
 
 String bleStatusStr = "Scanning...";
 String elmBuffer = "";
 bool elmResponseReady = false;
+
 int elmInitStep = 0;
 unsigned long lastElmRequest = 0;
 uint8_t currentExpectedPID = 0;
@@ -168,9 +203,13 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
     {
         char c = (char)pData[i];
         if (c == '>')
+        {
             elmResponseReady = true;
+        }
         else if (c != '\r' && c != '\n' && c != ' ')
+        {
             elmBuffer += c;
+        }
     }
 }
 
@@ -197,6 +236,7 @@ bool connectToServer()
     bleStatusStr = "Connecting...";
     BLEClient *pClient = BLEDevice::createClient();
     pClient->setClientCallbacks(new MyClientCallback());
+
     if (!pClient->connect(myDevice))
         return false;
 
@@ -223,6 +263,7 @@ bool connectToServer()
                 pDesc->writeValue(enableValue, 2, true);
         }
     }
+
     if (pTxCharacteristic != nullptr && pRxCharacteristic != nullptr)
     {
         bleStatusStr = "Init ELM327...";
@@ -231,6 +272,8 @@ bool connectToServer()
         elmResponseReady = false;
         return true;
     }
+
+    bleStatusStr = "RX/TX Not Found";
     pClient->disconnect();
     return false;
 }
@@ -276,8 +319,14 @@ void parseOBDResponse(String response, uint8_t pid)
     int idx = response.indexOf(searchStr);
     if (idx != -1 && response.length() >= idx + 6)
     {
-        long A = strtol(response.substring(idx + 4, idx + 6).c_str(), NULL, 16);
-        long B = (response.length() >= idx + 8) ? strtol(response.substring(idx + 6, idx + 8).c_str(), NULL, 16) : 0;
+        String byteAStr = response.substring(idx + 4, idx + 6);
+        long A = strtol(byteAStr.c_str(), NULL, 16);
+        long B = 0;
+        if (response.length() >= idx + 8)
+        {
+            String byteBStr = response.substring(idx + 6, idx + 8);
+            B = strtol(byteBStr.c_str(), NULL, 16);
+        }
 
         switch (pid)
         {
@@ -289,9 +338,11 @@ void parseOBDResponse(String response, uint8_t pid)
             coolantTemp = A - 40;
             dashCoolant = coolantTemp;
             break;
-        case 0x0B:
+        case 0x0B: // Pression MAP (Collecteur en kPa)
             mapPressure = A;
-            turboPressureState = max(0.0, (A - 100.0) * 0.01);
+            turboPressureState = (A - 100.0) * 0.01;
+            if (turboPressureState < 0)
+                turboPressureState = 0;
             dashBoost = turboPressureState;
             break;
         case 0x0C:
@@ -322,61 +373,77 @@ void parseOBDResponse(String response, uint8_t pid)
             intakeTemp = A - 40;
             dashIAT = intakeTemp;
             break;
-        case 0x10:
+        case 0x10: // Débitmètre MAF (en g/s)
             mafPressure = ((A * 256.0) + B) / 100.0;
             break;
-        case 0x70:
-            targetBoost = max(0.0, (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0);
+        case 0x70: // Commanded Boost Pressure (Pression cible turbo)
+            targetBoost = (((A * 256.0) + B) * 0.03125) * 0.01 - 1.0;
+            if (targetBoost < 0)
+                targetBoost = 0;
             break;
         }
     }
 }
 
+// ==== SMART POLLING : Demande uniquement ce qui est affiché ====
 uint8_t getNextSmartPID()
 {
-    static uint8_t dashStep = 0, boostStep = 0, airStep = 0;
+    static uint8_t dashStep = 0;
+    static uint8_t boostStep = 0;
+    static uint8_t airStep = 0;
+
     switch (screenIndex)
     {
     case 0:
         airStep = !airStep;
-        return airStep ? 0x0B : 0x10;
+        return airStep ? 0x0B : 0x10; // Alterne entre MAP (kPa) et MAF (g/s)
     case 1:
         boostStep = !boostStep;
-        return boostStep ? 0x0B : 0x70;
+        return boostStep ? 0x0B : 0x70; // Alterne Pression Réelle et Cible
     case 2:
         return 0x0F;
     case 3:
         return 0x04;
     case 4:
         return 0x05;
-    case 5:
+    case 5: // Dash
         dashStep = (dashStep + 1) % 4;
-        return (dashStep == 0) ? 0x0B : (dashStep == 1) ? 0x0F
-                                    : (dashStep == 2)   ? 0x05
-                                                        : 0x0C;
+        if (dashStep == 0)
+            return 0x0B;
+        if (dashStep == 1)
+            return 0x0F;
+        if (dashStep == 2)
+            return 0x05;
+        if (dashStep == 3)
+            return 0x0C;
     case 6:
-        return 0x0D;
+        return 0x0D; // Timer (Besoin Vitesse)
     case 7:
-        return 0x0D;
+        return 0x0D; // Speed
     default:
-        return 0x0C;
+        return 0x0C; // Par défaut RPM
     }
 }
 
 void processBLE()
 {
-    if (doConnect)
+    if (doConnect == true)
     {
         if (!connectToServer())
             bleStatusStr = "Conn Fail";
         doConnect = false;
     }
+
     if (connected)
     {
         bool triggerNextRequest = false;
+
+        // Timeout (Laisse plus de temps pour l'étape 4 de détection auto ATSP0)
         unsigned long timeoutLimit = (elmInitStep == 4) ? 1500 : 500;
         if (!elmResponseReady && (millis() - lastElmRequest > timeoutLimit))
+        {
             triggerNextRequest = true;
+        }
 
         if (elmResponseReady)
         {
@@ -384,10 +451,14 @@ void processBLE()
             {
                 elmInitStep++;
                 if (elmInitStep == 5 && currentState == STATE_CONNECTING)
-                    currentState = STATE_GAUGES;
+                {
+                    currentState = STATE_GAUGES; // Démarrage terminé !
+                }
             }
             else
+            {
                 parseOBDResponse(elmBuffer, currentExpectedPID);
+            }
             elmBuffer = "";
             elmResponseReady = false;
             triggerNextRequest = true;
@@ -416,10 +487,13 @@ void processBLE()
             }
         }
     }
-    else if (doScan && !scanIsRunning)
+    else if (doScan)
     {
-        scanIsRunning = true;
-        BLEDevice::getScan()->start(2, scanCompleteCB, false);
+        if (!scanIsRunning)
+        {
+            scanIsRunning = true;
+            BLEDevice::getScan()->start(2, scanCompleteCB, false);
+        }
     }
 }
 
@@ -442,33 +516,56 @@ void drawStringRight(int x, int y, String text)
     u8g2.print(text);
 }
 
+// Fonction de transition Vidéo
+void startScreenTransition()
+{
+    memcpy(oldScreenBuffer, u8g2.getBufferPtr(), 1024);
+    isTransitioning = true;
+    slideOffset = 0;
+}
+
 String generateWebPage()
 {
     File file = LittleFS.open("/index.html", "r");
     if (!file)
-        return "<html><body><h3>File Web Manquant! Flashez le LittleFS!</h3></body></html>";
+        return "<html><body><h3>File not found</h3></body></html>";
     String html = file.readString();
     file.close();
+    html.reserve(html.length() + 1024);
+
+    // Remplacement dynamique du JavaScript pour simuler le double écran
+    html.replace("case 0: value = data.map; break;", "/* Modifié dynamiquement pour Screen 0 */");
+    html.replace(
+        "if (data.screen >= 0 && data.screen <= 4 || data.screen == 7) {",
+        "if (data.screen === 0) {\n"
+        "                drawCenterText(\"MAP: \" + Number(data.map).toFixed(0) + \" kPa\", 32);\n"
+        "                drawCenterText(\"MAF: \" + Number(data.maf).toFixed(1) + \" g/s\", 48);\n"
+        "            } else if (data.screen >= 1 && data.screen <= 4 || data.screen == 7) {");
 
     html.replace("%MIN%", String(TURBO_MIN_BAR));
     html.replace("%MAX%", String(TURBO_MAX_BAR));
     html.replace("%VERSION%", version_string);
+
     html.replace("%SELECTED_BOOST_TEXT%", (BOOST_SCREEN == 0) ? "selected" : "");
     html.replace("%SELECTED_BOOST_GAUGE%", (BOOST_SCREEN == 1) ? "selected" : "");
     html.replace("%SELECTED_BOOST_DIAL%", (BOOST_SCREEN == 2) ? "selected" : "");
     html.replace("%SELECTED_BOOST_BAR%", (BOOST_SCREEN == 3) ? "selected" : "");
+
     html.replace("%SELECTED_LOAD_TEXT%", (ENGLOAD_SCREEN == 0) ? "selected" : "");
     html.replace("%SELECTED_LOAD_GAUGE%", (ENGLOAD_SCREEN == 1) ? "selected" : "");
     html.replace("%SELECTED_LOAD_DIAL%", (ENGLOAD_SCREEN == 2) ? "selected" : "");
     html.replace("%SELECTED_LOAD_BAR%", (ENGLOAD_SCREEN == 3) ? "selected" : "");
+
     html.replace("%SELECTED_COOLANT_TEXT%", (COOLANT_SCREEN == 0) ? "selected" : "");
     html.replace("%SELECTED_COOLANT_GAUGE%", (COOLANT_SCREEN == 1) ? "selected" : "");
     html.replace("%SELECTED_COOLANT_DIAL%", (COOLANT_SCREEN == 2) ? "selected" : "");
     html.replace("%SELECTED_COOLANT_BAR%", (COOLANT_SCREEN == 3) ? "selected" : "");
+
     html.replace("%SELECTED_IAT_TEXT%", (IAT_SCREEN == 0) ? "selected" : "");
     html.replace("%SELECTED_IAT_GAUGE%", (IAT_SCREEN == 1) ? "selected" : "");
     html.replace("%SELECTED_IAT_DIAL%", (IAT_SCREEN == 2) ? "selected" : "");
     html.replace("%SELECTED_IAT_BAR%", (IAT_SCREEN == 3) ? "selected" : "");
+
     html.replace("%TICKS%", String(TICK_LINE_GAUGE));
     html.replace("%MAX_SPEED%", String(TARGET_SPEED));
     html.replace("%BRIGHTNESS_PCT%", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)));
@@ -495,15 +592,15 @@ void loadValues()
 {
     EEPROM.get(0, cfg);
     screenIndex = (cfg.last_screen >= 0 && cfg.last_screen < screenNumbers) ? cfg.last_screen : 0;
-    BOOST_SCREEN = constrain(cfg.boost_screen_type, 0, 3);
+    BOOST_SCREEN = (cfg.boost_screen_type >= 0 && cfg.boost_screen_type <= 3) ? cfg.boost_screen_type : 0;
     TURBO_MIN_BAR = cfg.turbo_min;
     TURBO_MAX_BAR = cfg.turbo_max;
-    ENGLOAD_SCREEN = constrain(cfg.engload_screen_type, 0, 3);
-    COOLANT_SCREEN = constrain(cfg.coolant_screen_type, 0, 3);
-    IAT_SCREEN = constrain(cfg.intake_temp_screen_type, 0, 3);
+    ENGLOAD_SCREEN = (cfg.engload_screen_type >= 0 && cfg.engload_screen_type <= 3) ? cfg.engload_screen_type : 0;
+    COOLANT_SCREEN = (cfg.coolant_screen_type >= 0 && cfg.coolant_screen_type <= 3) ? cfg.coolant_screen_type : 0;
+    IAT_SCREEN = (cfg.intake_temp_screen_type >= 0 && cfg.intake_temp_screen_type <= 3) ? cfg.intake_temp_screen_type : 0;
     TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
     TARGET_SPEED = (cfg.target_speed >= 10 && cfg.target_speed <= 300) ? cfg.target_speed : 100;
-    OLED_BRIGHTNESS = constrain(cfg.brightness, 0, 255);
+    OLED_BRIGHTNESS = (cfg.brightness >= 0 && cfg.brightness <= 255) ? cfg.brightness : 255;
 }
 
 void restart_ESP()
@@ -516,144 +613,144 @@ void restart_ESP()
     ESP.restart();
 }
 
-// Générateur Vectoriel sur Mesure - Fini les bugs de mémoire !
-void drawVectorIcon(int x, int y, int type)
+void draw_StatusBar(String title)
 {
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringLeft(0, 8, title);
+    // Affichage du numéro de page en haut à droite !
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringRight(128, 8, String(screenIndex + 1) + "/" + String(screenNumbers));
+}
+
+void drawConnectingScreen()
+{
+    u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+    u8g2.setDrawColor(0);
+    u8g2.drawBox(0, 44, 128, 20);
     u8g2.setDrawColor(1);
-    if (type == 1)
-    { // Flèche Retour (<-)
-        u8g2.drawLine(x + 8, y, x + 24, y);
-        u8g2.drawLine(x + 8, y, x + 14, y - 6);
-        u8g2.drawLine(x + 8, y, x + 14, y + 6);
-    }
-    else if (type == 2)
-    { // Engrenage
-        u8g2.drawCircle(x + 16, y, 6);
-        for (int i = 0; i < 8; i++)
-        {
-            float a = i * (PI / 4);
-            u8g2.drawLine(x + 16 + cos(a) * 6, y + sin(a) * 6, x + 16 + cos(a) * 10, y + sin(a) * 10);
-        }
-    }
-    else if (type == 3)
-    { // Soleil (Luminosité)
-        u8g2.drawCircle(x + 16, y, 5);
-        for (int i = 0; i < 8; i++)
-        {
-            float a = i * (PI / 4);
-            u8g2.drawPixel(x + 16 + cos(a) * 8, y + sin(a) * 8);
-            u8g2.drawPixel(x + 16 + cos(a) * 9, y + sin(a) * 9);
-        }
-    }
-    else if (type == 4)
-    { // Chrono
-        u8g2.drawCircle(x + 16, y, 10);
-        u8g2.drawLine(x + 16, y, x + 16, y - 6);
-        u8g2.drawLine(x + 16, y, x + 20, y);
-        u8g2.drawLine(x + 14, y - 12, x + 18, y - 12); // Bouton haut
-    }
-    else if (type == 5)
-    { // Jauge (Arc)
-        u8g2.drawCircle(x + 16, y + 4, 10, U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_UPPER_LEFT);
-        u8g2.drawLine(x + 16, y + 4, x + 22, y - 2); // Aiguille
-    }
-    else if (type == 6)
-    { // Oeil (Screen/Vue)
-        u8g2.drawEllipse(x + 16, y, 12, 6);
-        u8g2.drawCircle(x + 16, y, 3);
-    }
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringCenter(52, bleStatusStr);
+
+    if (connected)
+        drawStringCenter(62, "Init Step: " + String(elmInitStep) + "/5");
+    else
+        drawStringCenter(62, "Searching OBD...");
 }
 
 void buildMenu()
 {
     menuSize = 0;
     if (screenIndex >= 1 && screenIndex <= 4)
-        currentMenu[menuSize++] = {"Style Jauge", ACT_OPEN_STYLE_MENU, 5};
-    for (int i = 0; i < screenNumbers; i++)
-        currentMenu[menuSize++] = {screenNames[i], ACT_GO_SCREEN_0 + i, 6};
+        currentMenu[menuSize++] = {"Gauge Style ->", ACT_OPEN_STYLE_MENU, 2}; // Style
+
+    currentMenu[menuSize++] = {"Brightness", ACT_EDIT_BRIGHTNESS, 3}; // Soleil
+
     if (screenIndex == 1)
     {
-        currentMenu[menuSize++] = {"Min Turbo", ACT_EDIT_MIN, 2};
-        currentMenu[menuSize++] = {"Max Turbo", ACT_EDIT_MAX, 2};
+        currentMenu[menuSize++] = {"Turbo Min", ACT_EDIT_MIN, 1}; // Paramètres
+        currentMenu[menuSize++] = {"Turbo Max", ACT_EDIT_MAX, 1};
     }
     if (screenIndex == 6)
-        currentMenu[menuSize++] = {"Chrono Target", ACT_EDIT_SPEED, 4};
+    {
+        currentMenu[menuSize++] = {"Target Speed", ACT_EDIT_SPEED, 5}; // Speed/Timer
+    }
 
-    currentMenu[menuSize++] = {"Luminosite", ACT_EDIT_BRIGHTNESS, 3};
-    currentMenu[menuSize++] = {"Mode Config (Wifi)", ACT_ENTER_CONFIG, 2};
-    currentMenu[menuSize++] = {"Quitter Menu", ACT_CLOSE, 1};
+    for (int i = 0; i < screenNumbers; i++)
+    {
+        currentMenu[menuSize++] = {screenNames[i], ACT_GO_SCREEN_0 + i, 4}; // Flèche (Ecran)
+    }
+
+    currentMenu[menuSize++] = {"Mode Config", ACT_ENTER_CONFIG, 1}; // Paramètres
+    currentMenu[menuSize++] = {"Exit Menu", ACT_CLOSE, 0};          // Quitter
     menuCursor = 0;
 }
 
 void buildStyleMenu()
 {
     menuSize = 0;
-    currentMenu[menuSize++] = {"Mode Texte", ACT_SET_STYLE_TEXT, 5};
-    currentMenu[menuSize++] = {"Mode Graphique", ACT_SET_STYLE_GRAPH, 5};
-    currentMenu[menuSize++] = {"Mode Cadran", ACT_SET_STYLE_DIAL, 5};
-    currentMenu[menuSize++] = {"Mode Barre", ACT_SET_STYLE_BAR, 5};
-    currentMenu[menuSize++] = {"Retour", ACT_BACK_TO_MENU, 1};
+    currentMenu[menuSize++] = {"Text", ACT_SET_STYLE_TEXT, 2};
+    currentMenu[menuSize++] = {"Graph", ACT_SET_STYLE_GRAPH, 2};
+    currentMenu[menuSize++] = {"Dial", ACT_SET_STYLE_DIAL, 2};
+    currentMenu[menuSize++] = {"Bar", ACT_SET_STYLE_BAR, 2};
+    currentMenu[menuSize++] = {"<- Back", ACT_BACK_TO_MENU, 0};
 
-    int currentType = (screenIndex == 1) ? BOOST_SCREEN : (screenIndex == 2) ? IAT_SCREEN
-                                                      : (screenIndex == 3)   ? ENGLOAD_SCREEN
-                                                                             : COOLANT_SCREEN;
+    int currentType = 0;
+    if (screenIndex == 1)
+        currentType = BOOST_SCREEN;
+    else if (screenIndex == 2)
+        currentType = IAT_SCREEN;
+    else if (screenIndex == 3)
+        currentType = ENGLOAD_SCREEN;
+    else if (screenIndex == 4)
+        currentType = COOLANT_SCREEN;
+
     menuCursor = constrain(currentType, 0, 3);
 }
 
+// Typographie vectorielle pour les icônes U8g2
 void drawMenuScreen()
 {
-    // Entête Menu
     u8g2.setFont(u8g2_font_helvB08_tr);
     drawStringCenter(10, (currentState == STATE_STYLE_MENU) ? "STYLE" : "MENU");
 
-    // Icone vectorielle Centrale
-    drawVectorIcon(48, 30, currentMenu[menuCursor].icon);
+    // Dessin de l'icône associée avec la police Open Iconic
+    u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
+    int iconCode = currentMenu[menuCursor].icon;
+    if (iconCode == 0)
+        u8g2.drawGlyph(48, 44, 0x47); // Exit (Croix)
+    else if (iconCode == 1)
+        u8g2.drawGlyph(48, 44, 0x48); // Settings (Engrenage)
+    else if (iconCode == 2)
+        u8g2.drawGlyph(48, 44, 0x4a); // Style (Curseurs)
+    else if (iconCode == 3)
+    {
+        u8g2.setFont(u8g2_font_open_iconic_weather_4x_t);
+        u8g2.drawGlyph(48, 44, 0x45);
+    } // Sun
+    else if (iconCode == 4)
+        u8g2.drawGlyph(48, 44, 0x43); // Arrow Right (Ecran)
+    else if (iconCode == 5)
+        u8g2.drawGlyph(48, 44, 0x4b); // Speed (Chrono)
 
-    // Barre de sélection Inversée en bas
+    // Barre de sélection en bas
     u8g2.setDrawColor(1);
     u8g2.drawBox(0, 50, 128, 14);
-    u8g2.setDrawColor(0); // Texte Noir sur fond Blanc
-    u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(61, String(currentMenu[menuCursor].text));
-    u8g2.setDrawColor(1); // Retour à la normale
+    u8g2.setDrawColor(0); // Texte noir sur blanc
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(62, currentMenu[menuCursor].text);
+    u8g2.setDrawColor(1); // Rétablir la couleur normale
 
-    // Flèches HAUT / BAS pour le carrousel
+    // Flèches Haut/Bas
     u8g2.setFont(u8g2_font_open_iconic_arrow_1x_t);
     if (menuCursor > 0)
-        u8g2.drawGlyph(116, 28, 0x40); // Flèche Haut
+        u8g2.drawGlyph(116, 28, 0x40);
     if (menuCursor < menuSize - 1)
-        u8g2.drawGlyph(116, 40, 0x43); // Flèche Bas
+        u8g2.drawGlyph(116, 40, 0x43);
 }
 
-void drawEditScreen(String title, String valueStr)
-{
-    u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(16, title);
-    u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(42, valueStr);
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(62, "U/D: Edit | OK: Save");
-}
-
-void draw_ScreenNumber(uint8_t index)
-{
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringRight(126, 8, String(index + 1) + "/" + String(screenNumbers));
-}
-
-void draw_InfoText(String title, double value, String unit)
+void drawEditScreen(String title, String valueStr, String instruction)
 {
     u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringLeft(0, 10, title);
-    draw_ScreenNumber(screenIndex);
-
-    // Typographie IMMENSE puisque le bas est libre
-    u8g2.setFont(u8g2_font_helvB24_tr);
-    String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
-    drawStringCenter(48, valStr + " " + unit);
+    drawStringCenter(16, title);
+    u8g2.setFont(u8g2_font_helvR18_tr);
+    drawStringCenter(38, valueStr);
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(60, instruction);
 }
 
-#define AREA_CHART_HISTORY 96
+void drawConfigScreen()
+{
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(14, "MODE CONFIG");
+    u8g2.drawLine(0, 18, 128, 18);
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringCenter(30, "WiFi: " + String(ssid));
+    drawStringCenter(42, "MDP: 12345678");
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(60, "192.168.4.1");
+}
+
+#define AREA_CHART_HISTORY 94
 struct AreaChartData
 {
     double values[AREA_CHART_HISTORY];
@@ -679,6 +776,15 @@ String formatDecimal(double value, uint8_t decimals)
     return result;
 }
 
+void draw_InfoText(String title, double value, String unit)
+{
+    draw_StatusBar(title);
+    // Typographie Géante
+    u8g2.setFont(u8g2_font_helvB24_tr);
+    String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
+    drawStringCenter(48, valStr + " " + unit);
+}
+
 void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
     double valToStore = constrain(newValue, minValue, maxValue);
@@ -687,77 +793,78 @@ void draw_AreaChartWithHistory(AreaChartData &history, double newValue, double m
     if (history.currentIndex == 0)
         history.initialized = true;
 
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringLeft(0, 8, label);
-    draw_ScreenNumber(screenIndex);
+    draw_StatusBar(label);
 
-    // Graphique agrandi qui utilise le bas de l'écran
-    int chartX = 32, chartY = 16, chartWidth = AREA_CHART_HISTORY, chartHeight = 46, baseY = chartY + chartHeight;
+    // Graphique agrandi qui utilise l'espace du bas
+    int chartX = 32, chartY = 16, chartWidth = AREA_CHART_HISTORY, chartHeight = 44, baseY = chartY + chartHeight;
     u8g2.drawFrame(chartX, chartY, chartWidth, chartHeight);
 
     double range = maxValue - minValue;
     for (int i = 0; i < chartWidth; i++)
     {
-        int historyIdx = (history.currentIndex + i) % AREA_CHART_HISTORY;
+        int historyIdx = history.currentIndex + i;
         if (!history.initialized && i >= history.currentIndex)
             break;
+        historyIdx = historyIdx % AREA_CHART_HISTORY;
         double val = constrain(history.values[historyIdx], minValue, maxValue);
         int pixelHeight = (int)(chartHeight * ((val - minValue) / range));
         u8g2.drawLine(chartX + i, baseY, chartX + i, baseY - pixelHeight);
     }
 
+    // Cible (Ligne pointillée)
     if (targetValue > -999.0)
     {
-        int ty = baseY - (int)(chartHeight * ((constrain(targetValue, minValue, maxValue) - minValue) / range));
+        double t_val = constrain(targetValue, minValue, maxValue);
+        int t_height = (int)(chartHeight * ((t_val - minValue) / range));
+        int ty = baseY - t_height;
         for (int tx = chartX; tx < chartX + chartWidth; tx += 4)
             u8g2.drawPixel(tx, ty);
     }
 
-    int alignBorderX = chartX - 2;
-    drawStringRight(alignBorderX, chartY + 8, alignSign(formatDecimal(maxValue, 1)));
-    drawStringRight(alignBorderX, baseY, alignSign(formatDecimal(minValue, 1)));
-    drawStringRight(alignBorderX, chartY + (chartHeight / 2) + 4, alignSign(formatDecimal(newValue, 1)));
+    int maxLabelY = chartY + 8, minLabelY = baseY, valCenterY = chartY + (chartHeight / 2) + 4, alignBorderX = chartX - 2;
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringRight(alignBorderX, maxLabelY, alignSign(formatDecimal(maxValue, 1)));
+    drawStringRight(alignBorderX, minLabelY, alignSign(formatDecimal(minValue, 1)));
+    drawStringRight(alignBorderX, valCenterY, alignSign(formatDecimal(newValue, 1)));
 }
 
 void draw_LinearGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringLeft(0, 8, label);
-    draw_ScreenNumber(screenIndex);
+    draw_StatusBar(label);
 
-    // Valeur centrale très lisible
-    u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(32, String(value, 1) + " " + unit);
+    // Valeur Centrale Actuelle (très lisible)
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    drawStringCenter(36, String(value, 1) + " " + unit);
 
-    // Barre descendue vers le bas de l'écran
-    int barX = 4, barY = 44, barW = 120, barH = 10;
+    // Jauge segmentée allongée et abaissée
+    int barX = 4, barY = 44, barW = 120, barH = 12;
     u8g2.drawFrame(barX, barY, barW, barH);
 
     float val = constrain(value, minValue, maxValue);
-    int activeSegs = (int)(((val - minValue) / (maxValue - minValue)) * 23);
+    int segments = 23;
+    int activeSegs = (int)(((val - minValue) / (maxValue - minValue)) * segments);
     for (int i = 0; i < activeSegs; i++)
-        u8g2.drawBox(barX + 2 + (i * 5), barY + 2, 4, barH - 4);
+        u8g2.drawBox(barX + 3 + (i * 5), barY + 3, 4, barH - 6);
 
-    // Textes Min/Max tout en bas dans les coins
+    // Textes Min/Max tout en bas !
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringLeft(0, 64, String(minValue, 1));
     drawStringRight(128, 64, String(maxValue, 1));
 
     if (targetValue > -999.0)
     {
-        int t_x = barX + 2 + (int)(((constrain(targetValue, minValue, maxValue) - minValue) / (maxValue - minValue)) * (barW - 4));
+        float t_val = constrain(targetValue, minValue, maxValue);
+        int t_x = barX + 2 + (int)(((t_val - minValue) / (maxValue - minValue)) * (barW - 4));
         u8g2.drawTriangle(t_x, barY - 1, t_x - 3, barY - 5, t_x + 3, barY - 5);
     }
 }
 
 void draw_RoundGauge(double value, double minValue, double maxValue, String label, String unit, double targetValue = -1000.0)
 {
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringLeft(0, 8, label);
-    draw_ScreenNumber(screenIndex);
+    draw_StatusBar(label);
 
-    // Cadran GÉANT (Prend toute la largeur de l'écran)
-    int cx = 64, cy = 64, r = 50;
+    // Cadran repensé : Immense, repose en bas de l'écran
+    int cx = 64, cy = 68, r = 52;
 
     // Traits du cadran (Ticks)
     for (int i = 0; i <= 10; i++)
@@ -767,32 +874,32 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
         u8g2.drawLine(cx + cos(a) * r, cy - sin(a) * r, cx + cos(a) * r_inner, cy - sin(a) * r_inner);
     }
 
-    // Aiguille épaisse style compte-tours
+    // Aiguille épaisse
     float val = constrain(value, minValue, maxValue);
     float angle = PI - ((val - minValue) / (maxValue - minValue)) * PI;
     int nx = cx + cos(angle) * (r - 10);
     int ny = cy - sin(angle) * (r - 10);
-    u8g2.drawTriangle(nx, ny, cx + cos(angle + 0.15) * 12, cy - sin(angle + 0.15) * 12, cx + cos(angle - 0.15) * 12, cy - sin(angle - 0.15) * 12);
+    u8g2.drawTriangle(nx, ny, cx + cos(angle + 0.15) * 8, cy - sin(angle + 0.15) * 8, cx + cos(angle - 0.15) * 8, cy - sin(angle - 0.15) * 8);
 
-    // Masquage central (Pour écrire la valeur sans chevaucher l'aiguille)
+    // Masquage central PROPRE
     u8g2.setDrawColor(0);
-    u8g2.drawBox(20, 42, 88, 22);
+    u8g2.drawBox(20, 48, 88, 20); // Dégage l'espace pour le texte géant
     u8g2.setDrawColor(1);
 
-    // Valeur textuelle au centre du cadran
-    u8g2.setFont(u8g2_font_helvB14_tr);
-    drawStringCenter(58, String(value, 1) + " " + unit);
+    // Valeur textuelle énorme à l'intérieur
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    drawStringCenter(64, String(value, 1) + " " + unit);
 
-    // Min / Max relégués tout en bas dans les coins (Y=64)
+    // Min / Max relégués dans les coins (Y=64)
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringLeft(0, 64, String(minValue, 1));
     drawStringRight(128, 64, String(maxValue, 1));
 
-    // Curseur Cible (Petit rond sur le bord)
     if (targetValue > -999.0)
     {
-        float t_angle = PI - ((constrain(targetValue, minValue, maxValue) - minValue) / (maxValue - minValue)) * PI;
-        u8g2.drawCircle(cx + cos(t_angle) * (r + 2), cy - sin(t_angle) * (r + 2), 2);
+        float t_val = constrain(targetValue, minValue, maxValue);
+        float t_angle = PI - ((t_val - minValue) / (maxValue - minValue)) * PI;
+        u8g2.drawCircle(cx + cos(t_angle) * (r + 2), cy - sin(t_angle) * (r + 2), 3);
     }
 }
 
@@ -801,95 +908,89 @@ void draw_GaugeScreen(uint8_t index)
     switch (index)
     {
     case 0:
-        u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(0, 8, "AIR SENSORS");
-        draw_ScreenNumber(screenIndex);
-        u8g2.setFont(u8g2_font_helvR14_tr);
-        drawStringCenter(30, "MAP: " + String((int)mapPressure) + " kPa");
-        drawStringCenter(54, "MAF: " + String(mafPressure, 1) + " g/s");
+        draw_StatusBar("AIR SENSORS");
+        u8g2.setFont(u8g2_font_helvB14_tr);
+        drawStringCenter(30, "MAP : " + String((int)smMAP.val) + " kPa");
+        drawStringCenter(54, "MAF : " + String(smMAF.val, 1) + " g/s");
         break;
     case 1:
         if (BOOST_SCREEN == 0)
-            draw_InfoText("Boost", turboPressureState, "Bar");
+            draw_InfoText("Boost", smBoost.val, "Bar");
         else if (BOOST_SCREEN == 1)
-            draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_AreaChartWithHistory(turboHistory, smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         else if (BOOST_SCREEN == 2)
-            draw_RoundGauge(turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_RoundGauge(smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         else
-            draw_LinearGauge(turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_LinearGauge(smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         break;
     case 2:
         if (IAT_SCREEN == 0)
-            draw_InfoText("Temp IAT", intakeTemp, "C");
+            draw_InfoText("Temp IAT", smIAT.val, "C");
         else if (IAT_SCREEN == 1)
-            draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp IAT", "C");
+            draw_AreaChartWithHistory(iatHistory, smIAT.val, -20.0, 60.0, "Temp IAT", "C");
         else if (IAT_SCREEN == 2)
-            draw_RoundGauge(intakeTemp, -20.0, 60.0, "Temp IAT", "C");
+            draw_RoundGauge(smIAT.val, -20.0, 60.0, "Temp IAT", "C");
         else
-            draw_LinearGauge(intakeTemp, -20.0, 60.0, "Temp IAT", "C");
+            draw_LinearGauge(smIAT.val, -20.0, 60.0, "Temp IAT", "C");
         break;
     case 3:
         if (ENGLOAD_SCREEN == 0)
-            draw_InfoText("Charge", engineLoad, "%");
+            draw_InfoText("Charge", smLoad.val, "%");
         else if (ENGLOAD_SCREEN == 1)
-            draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge", "%");
+            draw_AreaChartWithHistory(loadHistory, smLoad.val, 0, 100, "Charge", "%");
         else if (ENGLOAD_SCREEN == 2)
-            draw_RoundGauge(engineLoad, 0, 100, "Charge", "%");
+            draw_RoundGauge(smLoad.val, 0, 100, "Charge", "%");
         else
-            draw_LinearGauge(engineLoad, 0, 100, "Charge", "%");
+            draw_LinearGauge(smLoad.val, 0, 100, "Charge", "%");
         break;
     case 4:
         if (COOLANT_SCREEN == 0)
-            draw_InfoText("Temp LdR", coolantTemp, "C");
+            draw_InfoText("Temp LdR", smCoolant.val, "C");
         else if (COOLANT_SCREEN == 1)
-            draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "C");
+            draw_AreaChartWithHistory(coolantHistory, smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
         else if (COOLANT_SCREEN == 2)
-            draw_RoundGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "C");
+            draw_RoundGauge(smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
         else
-            draw_LinearGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "C");
+            draw_LinearGauge(smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
         break;
     case 5:
-        u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(0, 8, "DASHBOARD");
-        draw_ScreenNumber(screenIndex);
-        u8g2.setFont(u8g2_font_helvR10_tr);
-        drawStringLeft(0, 30, "BST: " + String(dashBoost, 1) + "b");
-        drawStringLeft(68, 30, "IAT: " + String(dashIAT, 0) + "C");
-        drawStringLeft(0, 54, "LDR: " + String(dashCoolant, 0) + "C");
-        drawStringLeft(68, 54, "RPM: " + String((int)dashRPM));
+        draw_StatusBar("DASHBOARD");
+        u8g2.setFont(u8g2_font_helvB10_tr);
+        drawStringLeft(0, 30, "BST: " + String(smBoost.val, 1) + "b");
+        drawStringLeft(68, 30, "IAT: " + String(smIAT.val, 0) + "C");
+        drawStringLeft(0, 54, "LDR: " + String(smCoolant.val, 0) + "C");
+        drawStringLeft(68, 54, "RPM: " + String((int)smRPM.val));
         break;
     case 6:
-        u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(0, 8, "CHRONO");
-        draw_ScreenNumber(screenIndex);
+        draw_StatusBar("CHRONO");
         u8g2.setFont(u8g2_font_helvR12_tr);
         drawStringCenter(24, "0 - " + String(TARGET_SPEED) + " km/h");
         u8g2.setFont(u8g2_font_helvB18_tr);
         if (timerRunning)
-            drawStringCenter(50, String((millis() - speedTimerStart) / 1000.0, 2) + " s");
+            drawStringCenter(46, String((millis() - speedTimerStart) / 1000.0, 2) + " s");
         else if (lastTimerValue > 0)
-            drawStringCenter(50, String(lastTimerValue, 2) + " s");
+            drawStringCenter(46, String(lastTimerValue, 2) + " s");
         else
         {
             u8g2.setFont(u8g2_font_helvB14_tr);
-            drawStringCenter(50, "READY");
+            drawStringCenter(46, "READY");
         }
+        u8g2.setFont(u8g2_font_5x7_tr);
+        drawStringCenter(62, "Speed: " + String((int)currentSpeed) + " km/h");
         break;
     case 7:
-        draw_InfoText("Vitesse", currentSpeed, "km/h");
+        draw_InfoText("Speed", smSpeed.val, "km/h");
         break;
     case 8:
-        u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(0, 8, "OBD DEBUG");
-        draw_ScreenNumber(screenIndex);
+        draw_StatusBar("OBD BLE");
         u8g2.setFont(u8g2_font_5x7_tr);
-        u8g2.setCursor(0, 26);
+        u8g2.setCursor(0, 24);
         u8g2.print("Status: " + bleStatusStr);
-        u8g2.setCursor(0, 36);
-        u8g2.print("Packets: " + String(packetsReceived));
-        u8g2.setCursor(0, 46);
+        u8g2.setCursor(0, 34);
+        u8g2.print("Packets RX: " + String(packetsReceived));
+        u8g2.setCursor(0, 44);
         u8g2.print("Init Step: " + String(elmInitStep) + "/5");
-        u8g2.setCursor(0, 56);
+        u8g2.setCursor(0, 54);
         u8g2.print("Buf: " + elmBuffer);
         break;
     }
@@ -925,6 +1026,7 @@ void startServer()
       if (server.hasArg("iat_gauge_type")) IAT_SCREEN = server.arg("iat_gauge_type").toInt();
       if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
       if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+      
       OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS, 0, 255); setOledBrightness(OLED_BRIGHTNESS);
       saveValues(); server.sendHeader("Location", "/"); server.send(303); });
 
@@ -944,7 +1046,7 @@ void startServer()
 void setup()
 {
     Serial.begin(115200);
-    delay(2000); // FIX BOOTLOOP: Pause de sécurité pour la tension
+    delay(2000);
 
     pinMode(BTN_UP, INPUT_PULLUP);
     pinMode(BTN_DOWN, INPUT_PULLUP);
@@ -1025,15 +1127,17 @@ void loop()
             buildMenu();
             currentState = STATE_MENU;
         }
-        else if (currentState != STATE_GAUGES)
+        else if (currentState == STATE_MENU || currentState >= STATE_EDIT_MIN)
             currentState = STATE_GAUGES;
     }
 
     if (upPressed || downPressed)
     {
         int dir = upPressed ? -1 : 1;
-        if (currentState == STATE_GAUGES)
+        if (currentState == STATE_GAUGES && !isTransitioning)
         {
+            slideDirection = dir; // 1 (Next, slide left), -1 (Prev, slide right)
+            startScreenTransition();
             if (upPressed)
                 screenIndex = (screenIndex == 0) ? (screenNumbers - 1) : (screenIndex - 1);
             if (downPressed)
@@ -1049,17 +1153,11 @@ void loop()
                 menuCursor = 0;
         }
         else if (currentState == STATE_EDIT_MIN)
-        {
             TURBO_MIN_BAR = constrain(TURBO_MIN_BAR + (dir * -0.1), -1.0, 0.5);
-        }
         else if (currentState == STATE_EDIT_MAX)
-        {
             TURBO_MAX_BAR = constrain(TURBO_MAX_BAR + (dir * -0.1), 0.5, 3.0);
-        }
         else if (currentState == STATE_EDIT_SPEED)
-        {
             TARGET_SPEED = constrain(TARGET_SPEED + (dir * -10), 40, 200);
-        }
         else if (currentState == STATE_EDIT_BRIGHTNESS)
         {
             OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS + (dir * -25), 0, 255);
@@ -1069,7 +1167,7 @@ void loop()
 
     if (okPressed)
     {
-        if (currentState == STATE_MENU || currentState == STATE_STYLE_MENU)
+        if (currentState == STATE_MENU)
         {
             int action = currentMenu[menuCursor].action;
             if (action == ACT_CLOSE)
@@ -1101,7 +1199,11 @@ void loop()
                 saveValues();
                 currentState = STATE_GAUGES;
             }
-            else if (action == ACT_BACK_TO_MENU)
+        }
+        else if (currentState == STATE_STYLE_MENU)
+        {
+            int action = currentMenu[menuCursor].action;
+            if (action == ACT_BACK_TO_MENU)
             {
                 buildMenu();
                 currentState = STATE_MENU;
@@ -1130,44 +1232,70 @@ void loop()
         }
     }
 
+    // ==== RAFFRAICHISSEMENT ULTRA-RAPIDE 25 FPS (40ms) ====
     static unsigned long lastDrawTime = 0;
-    if (millis() - lastDrawTime > 60)
+    if (millis() - lastDrawTime > 40)
     {
         lastDrawTime = millis();
+
+        // Application de la Moyenne Mobile Exponentielle pour lisser les données
+        smBoost.update(turboPressureState);
+        smIAT.update(intakeTemp);
+        smLoad.update(engineLoad);
+        smCoolant.update(coolantTemp);
+        smSpeed.update(currentSpeed);
+        smRPM.update(dashRPM);
+        smMAP.update(mapPressure);
+        smMAF.update(mafPressure);
+
         u8g2.clearBuffer();
         if (currentState == STATE_CONNECTING)
-        {
-            u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-            u8g2.setDrawColor(0);
-            u8g2.drawBox(0, 44, 128, 20);
-            u8g2.setDrawColor(1);
-            u8g2.setFont(u8g2_font_helvR08_tr);
-            drawStringCenter(52, bleStatusStr);
-            drawStringCenter(62, connected ? "Init Step: " + String(elmInitStep) + "/5" : "Searching OBD...");
-        }
+            drawConnectingScreen();
         else if (currentState == STATE_GAUGES)
-            draw_GaugeScreen(screenIndex);
-        else if (currentState == STATE_CONFIG)
         {
-            u8g2.setFont(u8g2_font_helvB10_tr);
-            drawStringCenter(14, "MODE CONFIG");
-            u8g2.drawLine(0, 18, 128, 18);
-            u8g2.setFont(u8g2_font_helvR08_tr);
-            drawStringCenter(34, "WiFi: " + String(ssid));
-            drawStringCenter(46, "MDP: 12345678");
-            u8g2.setFont(u8g2_font_5x7_tr);
-            drawStringCenter(62, "192.168.4.1");
+            draw_GaugeScreen(screenIndex);
+
+            // MOTEUR DE TRANSITION GLISSANTE SUR BUFFER U8G2
+            if (isTransitioning)
+            {
+                slideOffset += 24; // Vitesse du slide (5 frames environ)
+                if (slideOffset >= 128)
+                    isTransitioning = false;
+                else
+                {
+                    uint8_t temp[1024];
+                    uint8_t *currentScreen = u8g2.getBufferPtr();
+                    for (int p = 0; p < 8; p++)
+                    {
+                        int pageStart = p * 128;
+                        if (slideDirection == 1)
+                        { // Swipe Next (Glisse à gauche)
+                            memcpy(&temp[pageStart], &oldScreenBuffer[pageStart + slideOffset], 128 - slideOffset);
+                            memcpy(&temp[pageStart + 128 - slideOffset], &currentScreen[pageStart], slideOffset);
+                        }
+                        else
+                        { // Swipe Prev (Glisse à droite)
+                            memcpy(&temp[pageStart], &currentScreen[pageStart + 128 - slideOffset], slideOffset);
+                            memcpy(&temp[pageStart + slideOffset], &oldScreenBuffer[pageStart], 128 - slideOffset);
+                        }
+                    }
+                    memcpy(currentScreen, temp, 1024);
+                }
+            }
         }
+        else if (currentState == STATE_CONFIG)
+            drawConfigScreen();
         else if (currentState == STATE_MENU || currentState == STATE_STYLE_MENU)
             drawMenuScreen();
         else if (currentState == STATE_EDIT_MIN)
-            drawEditScreen("Edit Min", String(TURBO_MIN_BAR, 1));
+            drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "U/D: Edit | OK: Save");
         else if (currentState == STATE_EDIT_MAX)
-            drawEditScreen("Edit Max", String(TURBO_MAX_BAR, 1));
+            drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "U/D: Edit | OK: Save");
         else if (currentState == STATE_EDIT_SPEED)
-            drawEditScreen("Target Speed", String(TARGET_SPEED));
+            drawEditScreen("Target Speed", String(TARGET_SPEED), "U/D: Edit | OK: Save");
         else if (currentState == STATE_EDIT_BRIGHTNESS)
-            drawEditScreen("Brightness", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)) + " %");
+            drawEditScreen("Brightness", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)) + " %", "U/D: Edit | OK: Save");
+
         u8g2.sendBuffer();
     }
     yield();
