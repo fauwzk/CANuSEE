@@ -641,27 +641,27 @@ void buildMenu()
 {
     menuSize = 0;
     if (screenIndex >= 1 && screenIndex <= 4)
-        currentMenu[menuSize++] = {"Gauge Style ->", ACT_OPEN_STYLE_MENU, 2}; // Style
+        currentMenu[menuSize++] = {"Gauge Style ->", ACT_OPEN_STYLE_MENU, 2}; // Icône de curseurs/réglages
 
-    currentMenu[menuSize++] = {"Brightness", ACT_EDIT_BRIGHTNESS, 3}; // Soleil
+    currentMenu[menuSize++] = {"Brightness", ACT_EDIT_BRIGHTNESS, 3}; // Icône Soleil
 
     if (screenIndex == 1)
     {
-        currentMenu[menuSize++] = {"Turbo Min", ACT_EDIT_MIN, 1}; // Paramètres
-        currentMenu[menuSize++] = {"Turbo Max", ACT_EDIT_MAX, 1};
+        currentMenu[menuSize++] = {"Turbo Min", ACT_EDIT_MIN, 2}; // Icône Curseurs
+        currentMenu[menuSize++] = {"Turbo Max", ACT_EDIT_MAX, 2};
     }
     if (screenIndex == 6)
     {
-        currentMenu[menuSize++] = {"Target Speed", ACT_EDIT_SPEED, 5}; // Speed/Timer
+        currentMenu[menuSize++] = {"Target Speed", ACT_EDIT_SPEED, 5}; // Icône Chrono
     }
 
     for (int i = 0; i < screenNumbers; i++)
     {
-        currentMenu[menuSize++] = {screenNames[i], ACT_GO_SCREEN_0 + i, 4}; // Flèche (Ecran)
+        currentMenu[menuSize++] = {screenNames[i], ACT_GO_SCREEN_0 + i, 4}; // Flèche
     }
 
-    currentMenu[menuSize++] = {"Mode Config", ACT_ENTER_CONFIG, 1}; // Paramètres
-    currentMenu[menuSize++] = {"Exit Menu", ACT_CLOSE, 0};          // Quitter
+    currentMenu[menuSize++] = {"Mode Config", ACT_ENTER_CONFIG, 1}; // Engrenage
+    currentMenu[menuSize++] = {"Exit Menu", ACT_CLOSE, 0};          // Croix
     menuCursor = 0;
 }
 
@@ -687,45 +687,52 @@ void buildStyleMenu()
     menuCursor = constrain(currentType, 0, 3);
 }
 
-// Typographie vectorielle pour les icônes U8g2
+// Typographie vectorielle U8g2 (Menu Automobile Clean)
 void drawMenuScreen()
 {
-    u8g2.setFont(u8g2_font_helvB08_tr);
-    drawStringCenter(10, (currentState == STATE_STYLE_MENU) ? "STYLE" : "MENU");
+    // 1. Pagination en haut à gauche (Contexte)
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringLeft(0, 8, String(menuCursor + 1) + "/" + String(menuSize));
 
-    // Dessin de l'icône associée avec la police Open Iconic
+    // 2. Icône Géante Centrée
     u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
     int iconCode = currentMenu[menuCursor].icon;
+    int iconX = 48; // Parfaitement centré
+    int iconY = 40;
+
     if (iconCode == 0)
-        u8g2.drawGlyph(48, 44, 0x47); // Exit (Croix)
+        u8g2.drawGlyph(iconX, iconY, 0x47); // Exit (Croix)
     else if (iconCode == 1)
-        u8g2.drawGlyph(48, 44, 0x48); // Settings (Engrenage)
+        u8g2.drawGlyph(iconX, iconY, 0x48); // Settings (Engrenage)
     else if (iconCode == 2)
-        u8g2.drawGlyph(48, 44, 0x4a); // Style (Curseurs)
+        u8g2.drawGlyph(iconX, iconY, 0x4a); // Sliders (Style/Réglages)
     else if (iconCode == 3)
     {
         u8g2.setFont(u8g2_font_open_iconic_weather_4x_t);
-        u8g2.drawGlyph(48, 44, 0x45);
+        u8g2.drawGlyph(iconX, iconY, 0x45);
     } // Sun
     else if (iconCode == 4)
-        u8g2.drawGlyph(48, 44, 0x43); // Arrow Right (Ecran)
+        u8g2.drawGlyph(iconX, iconY, 0x43); // Arrow Right (Ecran)
     else if (iconCode == 5)
-        u8g2.drawGlyph(48, 44, 0x4b); // Speed (Chrono)
+        u8g2.drawGlyph(iconX, iconY, 0x4b); // Timer (Speed)
 
-    // Barre de sélection en bas
+    // 3. Barre de scroll visuelle à droite (Très automobile)
+    u8g2.drawFrame(122, 0, 6, 44);
+    int scrollHeight = max(4, 44 / menuSize);
+    int scrollY = 0;
+    if (menuSize > 1)
+    {
+        scrollY = (menuCursor * (44 - scrollHeight)) / (menuSize - 1);
+    }
+    u8g2.drawBox(122, scrollY, 6, scrollHeight);
+
+    // 4. Texte de l'option (Fond inversé, police très large)
     u8g2.setDrawColor(1);
-    u8g2.drawBox(0, 50, 128, 14);
-    u8g2.setDrawColor(0); // Texte noir sur blanc
-    u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(62, currentMenu[menuCursor].text);
+    u8g2.drawBox(0, 48, 128, 16);
+    u8g2.setDrawColor(0);               // Texte noir sur blanc
+    u8g2.setFont(u8g2_font_helvB12_tr); // Police grasse et très lisible
+    drawStringCenter(61, currentMenu[menuCursor].text);
     u8g2.setDrawColor(1); // Rétablir la couleur normale
-
-    // Flèches Haut/Bas
-    u8g2.setFont(u8g2_font_open_iconic_arrow_1x_t);
-    if (menuCursor > 0)
-        u8g2.drawGlyph(116, 28, 0x40);
-    if (menuCursor < menuSize - 1)
-        u8g2.drawGlyph(116, 40, 0x43);
 }
 
 void drawEditScreen(String title, String valueStr, String instruction)
