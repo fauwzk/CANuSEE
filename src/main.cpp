@@ -68,6 +68,7 @@ const int screenNumbers = 9;
 uint8_t screenIndex = 0;
 float TURBO_MIN_BAR = -0.7, TURBO_MAX_BAR = 1.5;
 
+// Variables brutes (Aucun lissage)
 float mapPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, engineRPM = 0.0;
 float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
@@ -1090,7 +1091,22 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    // Animation de démarrage Cinematic/Premium
+    // ==========================================
+    // NOUVELLE ANIMATION DE DÉMARRAGE CINÉMATIQUE
+    // ==========================================
+
+    // Phase 1 : Apparition "Wipe" du logo depuis le centre (Effet Rideau)
+    for (int w = 0; w <= 64; w += 3)
+    {
+        u8g2.clearBuffer();
+        u8g2.setClipWindow(64 - w, 0, 64 + w, 64);
+        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+        u8g2.setMaxClipWindow(); // Réinitialise la fenêtre d'affichage
+        u8g2.sendBuffer();
+        delay(15);
+    }
+
+    // Phase 2 : Le système boot et la barre de chargement se remplit
     for (int i = 0; i <= 100; i += 5)
     {
         u8g2.clearBuffer();
@@ -1109,10 +1125,10 @@ void setup()
 
         // Loading Bar fluide
         u8g2.drawFrame(14, 55, 100, 2);
-        u8g2.drawBox(14, 55, map(i, 0, 100, 0, 100), 2);
+        u8g2.drawBox(14, 55, i, 2);
 
         u8g2.sendBuffer();
-        delay(40); // Environ 800ms de belle animation
+        delay(30);
     }
 
     if (!LittleFS.begin())
