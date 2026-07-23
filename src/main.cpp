@@ -72,20 +72,6 @@ float mapPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, 
 float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
-// Moteur de lissage (Anti-Escalier EMA)
-struct SmoothData
-{
-    float val;
-    void update(float target)
-    {
-        if (abs(target - val) > (abs(target) * 0.5 + 20.0))
-            val = target;
-        else
-            val += (target - val) * 0.15; // Glissement super fluide
-    }
-};
-SmoothData smBoost = {0}, smIAT = {0}, smLoad = {0}, smCoolant = {0}, smRPM = {0}, smSpeed = {0}, smMAP = {0}, smMAF = {0};
-
 bool timerRunning = false, timerReady = false;
 unsigned long speedTimerStart = 0;
 float lastTimerValue = 0.0, currentSpeed = 0.0;
@@ -974,56 +960,56 @@ void draw_GaugeScreen(uint8_t index)
     case 0:
         draw_StatusBar("AIR SENSORS");
         u8g2.setFont(u8g2_font_helvB14_tr);
-        drawStringCenter(34, "MAP : " + String((int)smMAP.val) + " kPa");
-        drawStringCenter(56, "MAF : " + String(smMAF.val, 1) + " g/s");
+        drawStringCenter(34, "MAP : " + String((int)mapPressure) + " kPa");
+        drawStringCenter(56, "MAF : " + String(mafPressure, 1) + " g/s");
         break;
     case 1:
         if (BOOST_SCREEN == 0)
-            draw_InfoText("Boost", smBoost.val, "Bar");
+            draw_InfoText("Boost", turboPressureState, "Bar");
         else if (BOOST_SCREEN == 1)
-            draw_AreaChartWithHistory(turboHistory, smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_AreaChartWithHistory(turboHistory, turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         else if (BOOST_SCREEN == 2)
-            draw_RoundGauge(smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_RoundGauge(turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         else
-            draw_LinearGauge(smBoost.val, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
+            draw_LinearGauge(turboPressureState, TURBO_MIN_BAR, TURBO_MAX_BAR, "Boost", "Bar", targetBoost);
         break;
     case 2:
         if (IAT_SCREEN == 0)
-            draw_InfoText("Temp IAT", smIAT.val, "C");
+            draw_InfoText("Temp IAT", intakeTemp, "C");
         else if (IAT_SCREEN == 1)
-            draw_AreaChartWithHistory(iatHistory, smIAT.val, -20.0, 60.0, "Temp IAT", "C");
+            draw_AreaChartWithHistory(iatHistory, intakeTemp, -20.0, 60.0, "Temp IAT", "C");
         else if (IAT_SCREEN == 2)
-            draw_RoundGauge(smIAT.val, -20.0, 60.0, "Temp IAT", "C");
+            draw_RoundGauge(intakeTemp, -20.0, 60.0, "Temp IAT", "C");
         else
-            draw_LinearGauge(smIAT.val, -20.0, 60.0, "Temp IAT", "C");
+            draw_LinearGauge(intakeTemp, -20.0, 60.0, "Temp IAT", "C");
         break;
     case 3:
         if (ENGLOAD_SCREEN == 0)
-            draw_InfoText("Charge", smLoad.val, "%");
+            draw_InfoText("Charge", engineLoad, "%");
         else if (ENGLOAD_SCREEN == 1)
-            draw_AreaChartWithHistory(loadHistory, smLoad.val, 0, 100, "Charge", "%");
+            draw_AreaChartWithHistory(loadHistory, engineLoad, 0, 100, "Charge", "%");
         else if (ENGLOAD_SCREEN == 2)
-            draw_RoundGauge(smLoad.val, 0, 100, "Charge", "%");
+            draw_RoundGauge(engineLoad, 0, 100, "Charge", "%");
         else
-            draw_LinearGauge(smLoad.val, 0, 100, "Charge", "%");
+            draw_LinearGauge(engineLoad, 0, 100, "Charge", "%");
         break;
     case 4:
         if (COOLANT_SCREEN == 0)
-            draw_InfoText("Temp LdR", smCoolant.val, "C");
+            draw_InfoText("Temp LdR", coolantTemp, "C");
         else if (COOLANT_SCREEN == 1)
-            draw_AreaChartWithHistory(coolantHistory, smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
+            draw_AreaChartWithHistory(coolantHistory, coolantTemp, 40.0, 120.0, "Temp LdR", "C");
         else if (COOLANT_SCREEN == 2)
-            draw_RoundGauge(smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
+            draw_RoundGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "C");
         else
-            draw_LinearGauge(smCoolant.val, 40.0, 120.0, "Temp LdR", "C");
+            draw_LinearGauge(coolantTemp, 40.0, 120.0, "Temp LdR", "C");
         break;
     case 5:
         draw_StatusBar("DASHBOARD");
         u8g2.setFont(u8g2_font_helvB08_tr); // Police ajustée pour éviter l'overflow
-        drawStringLeft(0, 32, "BST: " + String(smBoost.val, 1) + "b");
-        drawStringLeft(68, 32, "IAT: " + String(smIAT.val, 0) + "C");
-        drawStringLeft(0, 56, "LDR: " + String(smCoolant.val, 0) + "C");
-        drawStringLeft(68, 56, "RPM: " + String((int)smRPM.val));
+        drawStringLeft(0, 32, "BST: " + String(turboPressureState, 1) + "b");
+        drawStringLeft(68, 32, "IAT: " + String(intakeTemp, 0) + "C");
+        drawStringLeft(0, 56, "LDR: " + String(coolantTemp, 0) + "C");
+        drawStringLeft(68, 56, "RPM: " + String((int)dashRPM));
         break;
     case 6:
         draw_StatusBar("CHRONO");
@@ -1043,7 +1029,7 @@ void draw_GaugeScreen(uint8_t index)
         drawStringCenter(62, "Speed: " + String((int)currentSpeed) + " km/h");
         break;
     case 7:
-        draw_InfoText("Speed", smSpeed.val, "km/h");
+        draw_InfoText("Speed", currentSpeed, "km/h");
         break;
     case 8:
         draw_StatusBar("OBD BLE");
@@ -1290,15 +1276,6 @@ void loop()
     if (millis() - lastDrawTime > 40)
     {
         lastDrawTime = millis();
-
-        smBoost.update(turboPressureState);
-        smIAT.update(intakeTemp);
-        smLoad.update(engineLoad);
-        smCoolant.update(coolantTemp);
-        smSpeed.update(currentSpeed);
-        smRPM.update(dashRPM);
-        smMAP.update(mapPressure);
-        smMAF.update(mafPressure);
 
         u8g2.clearBuffer();
         if (currentState == STATE_CONNECTING)
