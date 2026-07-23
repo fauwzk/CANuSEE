@@ -72,7 +72,7 @@ float mapPressure = 0.0, mafPressure = 0.0, intakeTemp = 0.0, engineLoad = 0.0, 
 float coolantTemp = 0.0, turboPressureState = 0.0, targetBoost = -1000.0;
 float dashBoost = 0, dashIAT = 0, dashCoolant = 0, dashRPM = 0, dashLoad = 0;
 
-// Moteur de lissage (Anti-Escalier)
+// Moteur de lissage (Anti-Escalier EMA)
 struct SmoothData
 {
     float val;
@@ -521,10 +521,9 @@ void drawVectorIcon(int cx, int cy, int type)
         break;
     case ICON_GEAR: // Rouage / Paramètres
         u8g2.drawDisc(cx, cy, 12);
-        // Hardcode les branches pour éviter le cos/sin lourd
         u8g2.drawBox(cx - 4, cy - 16, 8, 32);
         u8g2.drawBox(cx - 16, cy - 4, 32, 8);
-        u8g2.drawBox(cx - 12, cy - 12, 24, 24); // Remplissage
+        u8g2.drawBox(cx - 12, cy - 12, 24, 24);
         u8g2.setDrawColor(0);
         u8g2.drawDisc(cx, cy, 6);
         u8g2.setDrawColor(1);
@@ -555,13 +554,12 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawDisc(cx, cy + 2, 8);
         u8g2.setDrawColor(1);
         u8g2.drawDisc(cx, cy + 2, 3);
-        u8g2.drawBox(cx + 4, cy - 14, 12, 12); // Sortie d'air
-        // Hélice
+        u8g2.drawBox(cx + 4, cy - 14, 12, 12);
         u8g2.drawLine(cx, cy + 2, cx + 5, cy - 3);
         u8g2.drawLine(cx, cy + 2, cx - 5, cy - 3);
         u8g2.drawLine(cx, cy + 2, cx - 5, cy + 7);
         break;
-    case ICON_TEMP: // Thermomètre IAT / LDR
+    case ICON_TEMP: // Thermomètre
         u8g2.drawFrame(cx - 5, cy - 16, 10, 26);
         u8g2.drawDisc(cx, cy + 10, 9);
         u8g2.setDrawColor(0);
@@ -569,23 +567,23 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawLine(cx, cy + 7, cx, cy - 12);
         u8g2.setDrawColor(1);
         u8g2.drawDisc(cx, cy + 10, 3);
-        u8g2.drawLine(cx, cy + 10, cx, cy - 4); // Mercure
+        u8g2.drawLine(cx, cy + 10, cx, cy - 4);
         u8g2.drawLine(cx + 6, cy - 8, cx + 10, cy - 8);
-        u8g2.drawLine(cx + 6, cy - 2, cx + 10, cy - 2); // Graduations
+        u8g2.drawLine(cx + 6, cy - 2, cx + 10, cy - 2);
         break;
-    case ICON_ENGINE:                                      // Bloc moteur V4 stylisé
-        u8g2.drawBox(cx - 14, cy - 4, 28, 18);             // Bas moteur
-        u8g2.drawBox(cx - 10, cy - 12, 8, 8);              // Cylindre G
-        u8g2.drawBox(cx + 2, cy - 12, 8, 8);               // Cylindre D
-        u8g2.drawDisc(cx - 16, cy + 6, 5);                 // Poulie
-        u8g2.drawDisc(cx + 16, cy + 6, 5);                 // Poulie
-        u8g2.drawLine(cx - 16, cy + 11, cx + 16, cy + 11); // Courroie
+    case ICON_ENGINE: // Bloc moteur V4 stylisé
+        u8g2.drawBox(cx - 14, cy - 4, 28, 18);
+        u8g2.drawBox(cx - 10, cy - 12, 8, 8);
+        u8g2.drawBox(cx + 2, cy - 12, 8, 8);
+        u8g2.drawDisc(cx - 16, cy + 6, 5);
+        u8g2.drawDisc(cx + 16, cy + 6, 5);
+        u8g2.drawLine(cx - 16, cy + 11, cx + 16, cy + 11);
         break;
     case ICON_TIMER: // Chrono 0-100
         u8g2.drawCircle(cx, cy + 2, 16);
-        u8g2.drawBox(cx - 4, cy - 18, 8, 4);              // Bouton haut
-        u8g2.drawLine(cx + 11, cy - 9, cx + 16, cy - 14); // Bouton côté
-        u8g2.drawLine(cx, cy + 2, cx, cy - 10);           // Aiguille
+        u8g2.drawBox(cx - 4, cy - 18, 8, 4);
+        u8g2.drawLine(cx + 11, cy - 9, cx + 16, cy - 14);
+        u8g2.drawLine(cx, cy + 2, cx, cy - 10);
         break;
     case ICON_BLE: // Logo Bluetooth
         u8g2.drawLine(cx, cy - 16, cx, cy + 16);
@@ -599,7 +597,7 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawFrame(cx + 2, cy - 16, 14, 14);
         u8g2.drawFrame(cx - 16, cy + 2, 14, 14);
         u8g2.drawFrame(cx + 2, cy + 2, 14, 14);
-        u8g2.drawBox(cx - 14, cy + 4, 10, 10); // Rempli
+        u8g2.drawBox(cx - 14, cy + 4, 10, 10);
         break;
     case ICON_SLIDERS: // Réglages Min / Max
         u8g2.drawLine(cx - 14, cy - 8, cx + 14, cy - 8);
@@ -622,7 +620,7 @@ String generateWebPage()
         return "<html><body><h3>File not found</h3></body></html>";
     String html = file.readString();
     file.close();
-    return html; // Gardé concis pour cet exemple, comme tu n'as pas de souci coté Web
+    return html;
 }
 
 void saveValues()
@@ -683,7 +681,6 @@ void buildMenu()
     if (screenIndex == 6)
         currentMenu[menuSize++] = {"Target Speed", ACT_EDIT_SPEED, ICON_TIMER};
 
-    // Noms contextuels pour les écrans
     currentMenu[menuSize++] = {"MAP/MAF", ACT_GO_SCREEN_0 + 0, ICON_AIR};
     currentMenu[menuSize++] = {"Boost", ACT_GO_SCREEN_0 + 1, ICON_TURBO};
     currentMenu[menuSize++] = {"IAT Temp", ACT_GO_SCREEN_0 + 2, ICON_TEMP};
@@ -702,7 +699,7 @@ void buildMenu()
 void buildStyleMenu()
 {
     menuSize = 0;
-    currentMenu[menuSize++] = {"Text", ACT_SET_STYLE_TEXT, ICON_AIR}; // Simple
+    currentMenu[menuSize++] = {"Text", ACT_SET_STYLE_TEXT, ICON_AIR};
     currentMenu[menuSize++] = {"Graph", ACT_SET_STYLE_GRAPH, ICON_TURBO};
     currentMenu[menuSize++] = {"Dial", ACT_SET_STYLE_DIAL, ICON_GAUGE};
     currentMenu[menuSize++] = {"Bar", ACT_SET_STYLE_BAR, ICON_SLIDERS};
@@ -734,15 +731,15 @@ void draw_StatusBar(String title)
     drawStringLeft(0, 8, title);
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringRight(128, 8, String(screenIndex + 1) + "/" + String(screenNumbers));
+    // Nouvelle ligne de séparation de l'OS élégante
+    u8g2.drawLine(0, 10, 128, 10);
 }
 
 void drawMenuScreen()
 {
-    // Top Status (Compteur de page)
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringLeft(0, 8, String(menuCursor + 1) + "/" + String(menuSize));
 
-    // Scrollbar latérale élégante
     u8g2.drawFrame(124, 0, 4, 46);
     int scrollHeight = max(6, 46 / menuSize);
     int scrollY = 0;
@@ -750,46 +747,67 @@ void drawMenuScreen()
         scrollY = (menuCursor * (46 - scrollHeight)) / (menuSize - 1);
     u8g2.drawBox(124, scrollY, 4, scrollHeight);
 
-    // Icône Vectorielle ÉNORME et centée
-    int iconX = 61; // Centre visuel (128 - 6 px scrollbar = 122 / 2)
-    int iconY = 28; // Centre de la zone de dessin
+    int iconX = 61, iconY = 28;
     drawVectorIcon(iconX, iconY, currentMenu[menuCursor].iconType);
 
-    // Bandeau inférieur inversé avec Typo très lisible
     u8g2.setDrawColor(1);
     u8g2.drawBox(0, 48, 128, 16);
-    u8g2.setDrawColor(0); // Texte Noir sur Blanc
+    u8g2.setDrawColor(0);
     u8g2.setFont(u8g2_font_helvB12_tr);
     drawStringCenter(61, currentMenu[menuCursor].text);
     u8g2.setDrawColor(1);
 }
 
-void drawEditScreen(String title, String valueStr, String instruction)
+// EditScreen amélioré avec une Slider Bar (pourcentage visuel)
+void drawEditScreen(String title, String valueStr, float progress)
 {
-    u8g2.setFont(u8g2_font_helvR10_tr);
-    drawStringCenter(16, title);
-    u8g2.setFont(u8g2_font_helvR18_tr);
-    drawStringCenter(40, valueStr);
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(14, title);
+    u8g2.setFont(u8g2_font_helvB18_tr);
+    drawStringCenter(36, valueStr);
+
+    // Slider Bar Automatique
+    u8g2.drawFrame(14, 42, 100, 6);
+    int fillWidth = progress * 96;
+    fillWidth = constrain(fillWidth, 0, 96);
+    u8g2.drawBox(16, 44, fillWidth, 2);
+
     u8g2.setDrawColor(1);
-    u8g2.drawBox(0, 50, 128, 14);
+    u8g2.drawBox(0, 52, 128, 12);
     u8g2.setDrawColor(0);
     u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(60, instruction);
+    drawStringCenter(60, "U/D: Edit | OK: Save");
     u8g2.setDrawColor(1);
 }
 
 void drawConnectingScreen()
 {
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+
+    // Boîte noire au fond pour dégager l'UI
     u8g2.setDrawColor(0);
     u8g2.drawBox(0, 44, 128, 20);
     u8g2.setDrawColor(1);
+
     u8g2.setFont(u8g2_font_helvR08_tr);
     drawStringCenter(52, bleStatusStr);
+
     if (connected)
-        drawStringCenter(62, "Init Step: " + String(elmInitStep) + "/5");
+    {
+        // Barre de chargement de l'étape ELM327
+        u8g2.drawFrame(14, 56, 100, 6);
+        int fill = (elmInitStep / 5.0) * 96;
+        u8g2.drawBox(16, 58, fill, 2);
+    }
     else
-        drawStringCenter(62, "Searching OBD...");
+    {
+        // Animation de points dynamique
+        int dots = (millis() / 500) % 4;
+        String loading = "Searching OBD";
+        for (int i = 0; i < dots; i++)
+            loading += ".";
+        drawStringCenter(62, loading);
+    }
 }
 
 void drawConfigScreen()
@@ -797,14 +815,18 @@ void drawConfigScreen()
     u8g2.setFont(u8g2_font_helvB10_tr);
     drawStringCenter(14, "MODE CONFIG");
     u8g2.drawLine(0, 18, 128, 18);
+
+    // UI type Boîte de dialogue encadrée
+    u8g2.drawFrame(10, 24, 108, 24);
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(30, "WiFi: " + String(ssid));
-    drawStringCenter(42, "MDP: 12345678");
+    drawStringCenter(36, "WiFi: " + String(ssid));
+    drawStringCenter(45, "MDP: 12345678");
+
     u8g2.setDrawColor(1);
-    u8g2.drawBox(0, 50, 128, 14);
+    u8g2.drawBox(0, 52, 128, 12);
     u8g2.setDrawColor(0);
     u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(60, "192.168.4.1");
+    drawStringCenter(60, "IP: 192.168.4.1");
     u8g2.setDrawColor(1);
 }
 
@@ -837,7 +859,7 @@ String formatDecimal(double value, uint8_t decimals)
 void draw_InfoText(String title, double value, String unit)
 {
     draw_StatusBar(title);
-    u8g2.setFont(u8g2_font_helvB24_tr);
+    u8g2.setFont(u8g2_font_helvB24_tr); // Typo géante libérée de toute contrainte
     String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
     drawStringCenter(48, valStr + " " + unit);
 }
@@ -886,7 +908,7 @@ void draw_LinearGauge(double value, double minValue, double maxValue, String lab
     u8g2.setFont(u8g2_font_helvB18_tr);
     drawStringCenter(36, String(value, 1) + " " + unit);
 
-    int barX = 4, barY = 42, barW = 120, barH = 12; // Remontée légèrement
+    int barX = 4, barY = 42, barW = 120, barH = 12; // Légèrement remonté pour la safe zone
     u8g2.drawFrame(barX, barY, barW, barH);
 
     float val = constrain(value, minValue, maxValue);
@@ -895,7 +917,7 @@ void draw_LinearGauge(double value, double minValue, double maxValue, String lab
     for (int i = 0; i < activeSegs; i++)
         u8g2.drawBox(barX + 3 + (i * 5), barY + 3, 4, barH - 6);
 
-    u8g2.setFont(u8g2_font_5x7_tr); // Marges latérales pour ne rien toucher
+    u8g2.setFont(u8g2_font_5x7_tr);
     drawStringLeft(0, 62, String(minValue, 1));
     drawStringRight(128, 62, String(maxValue, 1));
 
@@ -911,7 +933,7 @@ void draw_RoundGauge(double value, double minValue, double maxValue, String labe
 {
     draw_StatusBar(label);
 
-    int cx = 64, cy = 64, r = 50; // Calage PARFAIT en bas
+    int cx = 64, cy = 64, r = 50;
 
     for (int i = 0; i <= 10; i++)
     {
@@ -1064,7 +1086,7 @@ void startServer()
 void setup()
 {
     Serial.begin(115200);
-    delay(2000);
+    delay(1000);
 
     pinMode(BTN_UP, INPUT_PULLUP);
     pinMode(BTN_DOWN, INPUT_PULLUP);
@@ -1079,12 +1101,30 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    u8g2.clearBuffer();
-    u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(56, "Demarrage...");
-    u8g2.sendBuffer();
-    delay(1500);
+    // Animation de démarrage Cinematic/Premium
+    for (int i = 0; i <= 100; i += 5)
+    {
+        u8g2.clearBuffer();
+        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+
+        // Bandeau noir épuré
+        u8g2.setDrawColor(0);
+        u8g2.drawBox(0, 44, 128, 20);
+        u8g2.setDrawColor(1);
+
+        // Textes
+        u8g2.setFont(u8g2_font_helvB10_tr);
+        drawStringCenter(53, "CANuSEE");
+        u8g2.setFont(u8g2_font_4x6_tr);
+        drawStringCenter(62, version_string);
+
+        // Loading Bar fluide
+        u8g2.drawFrame(14, 55, 100, 2);
+        u8g2.drawBox(14, 55, map(i, 0, 100, 0, 100), 2);
+
+        u8g2.sendBuffer();
+        delay(40); // Environ 800ms de belle animation
+    }
 
     if (!LittleFS.begin())
     {
@@ -1295,14 +1335,16 @@ void loop()
             drawConfigScreen();
         else if (currentState == STATE_MENU || currentState == STATE_STYLE_MENU)
             drawMenuScreen();
+
+        // Utilisation des pourcentages pour générer les Sliders
         else if (currentState == STATE_EDIT_MIN)
-            drawEditScreen("Edit Turbo Min", String(TURBO_MIN_BAR, 1), "U/D: Edit | OK: Save");
+            drawEditScreen("Turbo Min", String(TURBO_MIN_BAR, 1) + " b", (TURBO_MIN_BAR + 1.0) / 1.5);
         else if (currentState == STATE_EDIT_MAX)
-            drawEditScreen("Edit Turbo Max", String(TURBO_MAX_BAR, 1), "U/D: Edit | OK: Save");
+            drawEditScreen("Turbo Max", String(TURBO_MAX_BAR, 1) + " b", (TURBO_MAX_BAR - 0.5) / 2.5);
         else if (currentState == STATE_EDIT_SPEED)
-            drawEditScreen("Target Speed", String(TARGET_SPEED), "U/D: Edit | OK: Save");
+            drawEditScreen("Target Speed", String(TARGET_SPEED) + " km/h", (TARGET_SPEED - 40.0) / 160.0);
         else if (currentState == STATE_EDIT_BRIGHTNESS)
-            drawEditScreen("Brightness", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)) + " %", "U/D: Edit | OK: Save");
+            drawEditScreen("Brightness", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)) + " %", OLED_BRIGHTNESS / 255.0);
 
         u8g2.sendBuffer();
     }
