@@ -9,7 +9,7 @@
 #include <DNSServer.h>
 #include "epd_bitmap_logo_3008.h"
 #include <ElegantOTA.h>
-#include "version.h" // Inclut dynamiquement la version via PlatformIO CI
+#include "version.h"
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -59,7 +59,11 @@ enum AppState
     STATE_CONFIG
 };
 AppState currentState = STATE_CONNECTING;
+
+// Variables pour les mises à jour OTA
 bool ota_updating = false;
+float ota_progress = 0.0;
+
 String version_string = "CANuSEE " FW_VERSION;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
@@ -499,13 +503,13 @@ void drawVectorIcon(int cx, int cy, int type)
 {
     switch (type)
     {
-    case ICON_EXIT: // Porte ouverte + Flèche
+    case ICON_EXIT:
         u8g2.drawFrame(cx - 14, cy - 16, 14, 32);
         u8g2.drawBox(cx - 11, cy - 13, 8, 26);
         u8g2.drawLine(cx - 2, cy, cx + 14, cy);
         u8g2.drawTriangle(cx + 6, cy - 6, cx + 16, cy, cx + 6, cy + 6);
         break;
-    case ICON_GEAR: // Rouage / Paramètres
+    case ICON_GEAR:
         u8g2.drawDisc(cx, cy, 12);
         u8g2.drawBox(cx - 4, cy - 16, 8, 32);
         u8g2.drawBox(cx - 16, cy - 4, 32, 8);
@@ -514,7 +518,7 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawDisc(cx, cy, 6);
         u8g2.setDrawColor(1);
         break;
-    case ICON_SUN: // Luminosité
+    case ICON_SUN:
         u8g2.drawDisc(cx, cy, 8);
         u8g2.drawLine(cx, cy - 12, cx, cy - 18);
         u8g2.drawLine(cx, cy + 12, cx, cy + 18);
@@ -525,16 +529,16 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawLine(cx - 8, cy + 8, cx - 13, cy + 13);
         u8g2.drawLine(cx + 8, cy - 8, cx + 13, cy - 13);
         break;
-    case ICON_GAUGE: // Compteur de vitesse / Cadran
+    case ICON_GAUGE:
         u8g2.drawCircle(cx, cy + 8, 18);
         u8g2.setDrawColor(0);
         u8g2.drawBox(cx - 20, cy + 8, 40, 20);
         u8g2.setDrawColor(1);
         u8g2.drawLine(cx - 18, cy + 8, cx + 18, cy + 8);
-        u8g2.drawLine(cx, cy + 8, cx + 12, cy - 4); // Aiguille
+        u8g2.drawLine(cx, cy + 8, cx + 12, cy - 4);
         u8g2.drawDisc(cx, cy + 8, 3);
         break;
-    case ICON_TURBO: // Escargot de turbo parfait
+    case ICON_TURBO:
         u8g2.drawDisc(cx, cy + 2, 14);
         u8g2.setDrawColor(0);
         u8g2.drawDisc(cx, cy + 2, 8);
@@ -545,7 +549,7 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawLine(cx, cy + 2, cx - 5, cy - 3);
         u8g2.drawLine(cx, cy + 2, cx - 5, cy + 7);
         break;
-    case ICON_TEMP: // Thermomètre
+    case ICON_TEMP:
         u8g2.drawFrame(cx - 5, cy - 16, 10, 26);
         u8g2.drawDisc(cx, cy + 10, 9);
         u8g2.setDrawColor(0);
@@ -557,7 +561,7 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawLine(cx + 6, cy - 8, cx + 10, cy - 8);
         u8g2.drawLine(cx + 6, cy - 2, cx + 10, cy - 2);
         break;
-    case ICON_ENGINE: // Bloc moteur V4 stylisé
+    case ICON_ENGINE:
         u8g2.drawBox(cx - 14, cy - 4, 28, 18);
         u8g2.drawBox(cx - 10, cy - 12, 8, 8);
         u8g2.drawBox(cx + 2, cy - 12, 8, 8);
@@ -565,33 +569,33 @@ void drawVectorIcon(int cx, int cy, int type)
         u8g2.drawDisc(cx + 16, cy + 6, 5);
         u8g2.drawLine(cx - 16, cy + 11, cx + 16, cy + 11);
         break;
-    case ICON_TIMER: // Chrono 0-100
+    case ICON_TIMER:
         u8g2.drawCircle(cx, cy + 2, 16);
         u8g2.drawBox(cx - 4, cy - 18, 8, 4);
         u8g2.drawLine(cx + 11, cy - 9, cx + 16, cy - 14);
         u8g2.drawLine(cx, cy + 2, cx, cy - 10);
         break;
-    case ICON_BLE: // Logo Bluetooth
+    case ICON_BLE:
         u8g2.drawLine(cx, cy - 16, cx, cy + 16);
         u8g2.drawLine(cx, cy - 16, cx + 10, cy - 6);
         u8g2.drawLine(cx + 10, cy - 6, cx - 10, cy + 6);
         u8g2.drawLine(cx, cy + 16, cx + 10, cy + 6);
         u8g2.drawLine(cx + 10, cy + 6, cx - 10, cy - 6);
         break;
-    case ICON_DASH: // Tableau de bord 4 cases
+    case ICON_DASH:
         u8g2.drawFrame(cx - 16, cy - 16, 14, 14);
         u8g2.drawFrame(cx + 2, cy - 16, 14, 14);
         u8g2.drawFrame(cx - 16, cy + 2, 14, 14);
         u8g2.drawFrame(cx + 2, cy + 2, 14, 14);
         u8g2.drawBox(cx - 14, cy + 4, 10, 10);
         break;
-    case ICON_SLIDERS: // Réglages Min / Max
+    case ICON_SLIDERS:
         u8g2.drawLine(cx - 14, cy - 8, cx + 14, cy - 8);
         u8g2.drawBox(cx - 8, cy - 14, 6, 12);
         u8g2.drawLine(cx - 14, cy + 8, cx + 14, cy + 8);
         u8g2.drawBox(cx + 2, cy + 2, 6, 12);
         break;
-    case ICON_AIR: // Filtre à air MAP/MAF
+    case ICON_AIR:
         u8g2.drawFrame(cx - 12, cy - 14, 24, 28);
         for (int i = -10; i <= 10; i += 5)
             u8g2.drawLine(cx - 12, cy + i, cx + 12, cy + i);
@@ -765,57 +769,84 @@ void drawEditScreen(String title, String valueStr, float progress)
     u8g2.setDrawColor(1);
 }
 
-// Nouvel écran de connexion plus dynamique sans le texte moche
 void drawConnectingScreen()
 {
     u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
-    // Boîte noire au fond pour dégager l'UI
+    // Boîte noire au fond avec séparation nette
     u8g2.setDrawColor(0);
-    u8g2.drawBox(0, 44, 128, 20);
+    u8g2.drawBox(0, 46, 128, 18);
     u8g2.setDrawColor(1);
+    u8g2.drawLine(0, 46, 128, 46);
 
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(52, bleStatusStr);
+    drawStringCenter(54, bleStatusStr);
 
-    u8g2.drawFrame(14, 56, 100, 6);
+    u8g2.drawFrame(4, 58, 120, 5);
 
     if (connected)
     {
-        // Barre de chargement de l'étape ELM327
-        int fill = (elmInitStep / 5.0) * 96;
+        int fill = (elmInitStep / 5.0) * 116;
         if (fill > 0)
-            u8g2.drawBox(16, 58, fill, 2);
+            u8g2.drawBox(6, 60, fill, 1);
     }
     else
     {
-        // Animation fluide de balayage (K2000 style) pour "Searching"
+        // K2000 scanner inside the bar
         int width = 20;
-        int max_x = 96 - width;
+        int max_x = 116 - width;
         int pos = (millis() / 15) % (max_x * 2);
         int xOffset = (pos < max_x) ? pos : (max_x * 2) - pos;
-        u8g2.drawBox(16 + xOffset, 58, width, 2);
+        u8g2.drawBox(6 + xOffset, 60, width, 1);
     }
 }
 
+// Nouvel écran "MODE CONFIG" ultra pro
 void drawConfigScreen()
 {
-    u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(14, "MODE CONFIG");
-    u8g2.drawLine(0, 18, 128, 18);
-
-    // UI type Boîte de dialogue encadrée
-    u8g2.drawFrame(10, 24, 108, 24);
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(36, "WiFi: " + String(ssid));
-    drawStringCenter(45, "MDP: 12345678");
-
+    // Header inversé en haut
     u8g2.setDrawColor(1);
-    u8g2.drawBox(0, 52, 128, 12);
+    u8g2.drawBox(0, 0, 128, 14);
     u8g2.setDrawColor(0);
-    u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringCenter(60, "IP: 192.168.4.1");
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringCenter(10, "PORTAL CONFIG");
     u8g2.setDrawColor(1);
+
+    // Icône stylisée Signal Wi-Fi à gauche
+    int cx = 18, cy = 30;
+    u8g2.drawBox(cx - 2, cy + 4, 4, 4);
+    u8g2.drawFrame(cx - 6, cy, 12, 2);
+    u8g2.drawFrame(cx - 10, cy - 4, 20, 2);
+
+    // Textes identifiants WiFi
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringLeft(36, 26, "SSID: " + String(ssid));
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringLeft(36, 38, "PASS: 12345678");
+
+    u8g2.drawLine(10, 46, 118, 46);
+
+    // L'IP très lisible en bas
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(60, "http://192.168.4.1");
+}
+
+// Nouvel écran de statut pendant la Mise à Jour (OTA)
+void drawOTAScreen()
+{
+    u8g2.setFont(u8g2_font_helvB12_tr);
+    drawStringCenter(16, "UPDATING...");
+
+    // Grande barre de progression au centre
+    u8g2.drawFrame(14, 30, 100, 10);
+    int fill = ota_progress * 96;
+    if (fill > 0)
+        u8g2.drawBox(16, 32, fill, 6);
+
+    // Pourcentage et avertissement
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(52, String((int)(ota_progress * 100)) + " %");
+    drawStringCenter(62, "Do not power off !");
 }
 
 #define AREA_CHART_HISTORY 94
@@ -844,11 +875,10 @@ String formatDecimal(double value, uint8_t decimals)
     return result;
 }
 
-// Typographie ajustée pour éviter les dépassements (overflow) sur de longues valeurs
 void draw_InfoText(String title, double value, String unit)
 {
     draw_StatusBar(title);
-    u8g2.setFont(u8g2_font_helvB18_tr); // Changé de 24 à 18
+    u8g2.setFont(u8g2_font_helvB18_tr);
     String valStr = (value == (int)value) ? String((int)value) : String(value, 1);
     drawStringCenter(48, valStr + " " + unit);
 }
@@ -897,7 +927,7 @@ void draw_LinearGauge(double value, double minValue, double maxValue, String lab
     u8g2.setFont(u8g2_font_helvB18_tr);
     drawStringCenter(36, String(value, 1) + " " + unit);
 
-    int barX = 4, barY = 42, barW = 120, barH = 12; // Légèrement remonté pour la safe zone
+    int barX = 4, barY = 42, barW = 120, barH = 12;
     u8g2.drawFrame(barX, barY, barW, barH);
 
     float val = constrain(value, minValue, maxValue);
@@ -1006,7 +1036,7 @@ void draw_GaugeScreen(uint8_t index)
         break;
     case 5:
         draw_StatusBar("DASHBOARD");
-        u8g2.setFont(u8g2_font_helvB08_tr); // Police ajustée pour éviter l'overflow
+        u8g2.setFont(u8g2_font_helvB08_tr);
         drawStringLeft(0, 32, "BST: " + String(turboPressureState, 1) + "b");
         drawStringLeft(68, 32, "IAT: " + String(intakeTemp, 0) + "C");
         drawStringLeft(0, 56, "LDR: " + String(coolantTemp, 0) + "C");
@@ -1014,9 +1044,9 @@ void draw_GaugeScreen(uint8_t index)
         break;
     case 6:
         draw_StatusBar("CHRONO");
-        u8g2.setFont(u8g2_font_helvB10_tr); // Typo adaptée
+        u8g2.setFont(u8g2_font_helvB10_tr);
         drawStringCenter(24, "0 - " + String(TARGET_SPEED) + " km/h");
-        u8g2.setFont(u8g2_font_helvB14_tr); // Typo adaptée pour ne pas écraser
+        u8g2.setFont(u8g2_font_helvB14_tr);
         if (timerRunning)
             drawStringCenter(46, String((millis() - speedTimerStart) / 1000.0, 2) + " s");
         else if (lastTimerValue > 0)
@@ -1042,7 +1072,6 @@ void draw_GaugeScreen(uint8_t index)
         u8g2.setCursor(0, 44);
         u8g2.print("Init Step: " + String(elmInitStep) + "/5");
         u8g2.setCursor(0, 54);
-        // Troncature du buffer pour éviter la bouillie visuelle
         u8g2.print("Buf: " + elmBuffer.substring(0, 16));
         break;
     }
@@ -1067,9 +1096,19 @@ void startServer()
     startCaptivePortal();
     server.on("/", HTTP_GET, []()
               { server.send(200, "text/html", generateWebPage()); });
+
     ElegantOTA.begin(&server);
+
+    // NOUVEAU : Callbacks pour suivre la progression de la mise à jour
     ElegantOTA.onStart([]()
-                       { ota_updating = true; });
+                       { 
+        ota_updating = true; 
+        ota_progress = 0.0; });
+    ElegantOTA.onProgress([](size_t current, size_t final)
+                          { ota_progress = (float)current / (float) final; });
+    ElegantOTA.onEnd([](bool success)
+                     { ota_updating = false; });
+
     server.begin();
 }
 
@@ -1092,73 +1131,71 @@ void setup()
     setOledBrightness(OLED_BRIGHTNESS);
 
     // ==========================================
-    // ANIMATION DE DÉMARRAGE : SCANNER 3D HIGH-TECH
+    // ANIMATION DE DÉMARRAGE : SCANNER LASER CALIBRÉ
     // ==========================================
 
-    // Phase 1 : Faisceau laser qui scanne l'écran de haut en bas pour révéler le logo 3008
+    // Phase 1 : Scanner Laser vertical rapide
     for (int h = 0; h <= 64; h += 2)
     {
         u8g2.clearBuffer();
-
-        // Affiche l'image uniquement au-dessus de la ligne du laser
         u8g2.setClipWindow(0, 0, 128, h);
         u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        // Dessine le rayon laser horizontal (une double ligne très brillante)
         if (h < 64)
         {
             u8g2.setDrawColor(1);
             u8g2.drawLine(0, h, 128, h);
             u8g2.drawLine(0, h + 1, 128, h + 1);
         }
-
         u8g2.sendBuffer();
-        delay(15); // Vitesse du scanner
+        delay(10);
     }
 
-    delay(200); // Courte pause une fois le logo totalement révélé
+    delay(150);
 
-    // Phase 2 : Le bandeau d'information glisse de bas en haut (mécanique)
-    for (int y = 64; y >= 44; y -= 2)
+    // Phase 2 : Le bandeau d'information glisse proprement de bas en haut (46 à 64)
+    for (int y = 64; y >= 46; y -= 2)
     {
         u8g2.clearBuffer();
         u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
-        // Dessine le panneau noir qui remonte progressivement
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, y, 128, 64 - y);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, y, 128, y); // Ligne supérieure de séparation du bandeau
+        u8g2.drawLine(0, y, 128, y);
 
         u8g2.sendBuffer();
-        delay(15);
+        delay(10);
     }
 
-    // Phase 3 : Le système s'initialise (Le texte s'affiche et la jauge se remplit rapidement)
+    // Phase 3 : Le texte et la barre s'affichent SANS CHEVAUCHEMENT (Marge absolue)
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
         u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
-        // Conserve le bandeau noir en place
+        // Bandeau Fixé et Ligne
         u8g2.setDrawColor(0);
-        u8g2.drawBox(0, 44, 128, 20);
+        u8g2.drawBox(0, 46, 128, 18);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, 44, 128, 44);
+        u8g2.drawLine(0, 46, 128, 46);
 
-        // Affiche les textes
-        u8g2.setFont(u8g2_font_helvB10_tr);
-        drawStringCenter(54, "CANuSEE");
-        u8g2.setFont(u8g2_font_4x6_tr);
-        drawStringCenter(62, version_string);
+        // Textes ajustés (CANuSEE à gauche, Version à droite)
+        u8g2.setFont(u8g2_font_helvB08_tr);
+        drawStringLeft(4, 55, "CANuSEE");
 
-        // Barre de chargement fluide
-        u8g2.drawFrame(14, 56, 100, 2);
-        u8g2.drawBox(14, 56, i, 2);
+        u8g2.setFont(u8g2_font_5x7_tr);
+        drawStringRight(124, 55, version_string);
+
+        // Barre de chargement ultra précise (y:58 à 62, ne touche ni les textes, ni le bas)
+        u8g2.drawFrame(4, 58, 120, 5);
+        int barWidth = (i * 116) / 100;
+        if (barWidth > 0)
+            u8g2.drawBox(6, 60, barWidth, 1);
 
         u8g2.sendBuffer();
-        delay(20);
+        delay(15);
     }
 
     if (!LittleFS.begin())
@@ -1195,8 +1232,7 @@ void loop()
         server.handleClient();
         ElegantOTA.loop();
         dnsServer.processNextRequest();
-        if (ota_updating)
-            return;
+        // ATTENTION : On ne fait PLUS de "return;" ici pour laisser l'écran se rafraîchir !
     }
     if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
         processBLE();
@@ -1358,11 +1394,20 @@ void loop()
             }
         }
         else if (currentState == STATE_CONFIG)
-            drawConfigScreen();
+        {
+            // Affiche l'écran OTA si MàJ en cours, sinon l'écran Config normal
+            if (ota_updating)
+            {
+                drawOTAScreen();
+            }
+            else
+            {
+                drawConfigScreen();
+            }
+        }
         else if (currentState == STATE_MENU || currentState == STATE_STYLE_MENU)
             drawMenuScreen();
 
-        // Utilisation des pourcentages pour générer les Sliders
         else if (currentState == STATE_EDIT_MIN)
             drawEditScreen("Turbo Min", String(TURBO_MIN_BAR, 1) + " b", (TURBO_MIN_BAR + 1.0) / 1.5);
         else if (currentState == STATE_EDIT_MAX)
