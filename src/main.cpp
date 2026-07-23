@@ -771,7 +771,10 @@ void drawEditScreen(String title, String valueStr, float progress)
 
 void drawConnectingScreen()
 {
-    u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+    int logoY = -9;
+    u8g2.setClipWindow(0, 0, 128, 46);
+    u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+    u8g2.setMaxClipWindow();
 
     // Boîte noire au fond avec séparation nette
     u8g2.setDrawColor(0);
@@ -1077,17 +1080,28 @@ void draw_GaugeScreen(uint8_t index)
     }
 }
 
+// ===============================================
+// AMELIORATION WIFI / CONFIG (STABILITE MAXIMALE)
+// ===============================================
 void startCaptivePortal()
 {
-    WiFi.mode(WIFI_OFF);
-    delay(200);
+    WiFi.disconnect(true, true); // Nettoie tout cache WiFi
+    delay(100);
     WiFi.mode(WIFI_AP);
-    delay(200);
+
+    // CRITIQUE : Désactive la mise en veille de la puce WiFi.
+    // Empêche les téléphones portables d'être éjectés du réseau !
+    WiFi.setSleep(false);
+    delay(100);
+
     IPAddress apIP(192, 168, 4, 1);
     IPAddress netMsk(255, 255, 255, 0);
     WiFi.softAPConfig(apIP, apIP, netMsk);
-    WiFi.softAP(ssid, "12345678");
+
+    // Fixe le canal Wi-Fi à 6 (ultra-stable) et limite à 4 appareils
+    WiFi.softAP(ssid, "12345678", 6, 0, 4);
     delay(500);
+
     dnsServer.start(DNS_PORT, "*", apIP);
 }
 
@@ -1099,7 +1113,6 @@ void startServer()
 
     ElegantOTA.begin(&server);
 
-    // NOUVEAU : Callbacks pour suivre la progression de la mise à jour
     ElegantOTA.onStart([]()
                        { 
         ota_updating = true; 
@@ -1130,28 +1143,16 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    // ==========================================
-    // ANIMATION DE DÉMARRAGE : SCANNER LASER CALIBRÉ
-    // ==========================================
-
-    // Le bandeau noir fait 18 pixels (de y=46 à y=64).
-    // Il nous reste donc 46 pixels de haut pour afficher le logo.
-    // Pour centrer verticalement le logo 3008 (qui fait 64px),
-    // on le remonte de 9 pixels (Y = -9). Ainsi, il occupera l'espace de 0 à 46.
-
     int logoY = -9;
 
-    // Phase 1 : Scanner Laser vertical rapide (uniquement dans la zone du logo)
     for (int h = 0; h <= 46; h += 2)
     {
         u8g2.clearBuffer();
 
-        // On dessine l'image remontée, rognée à la ligne du laser "h"
         u8g2.setClipWindow(0, 0, 128, h);
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        // Dessine la ligne laser horizontale brillante
         if (h < 46)
         {
             u8g2.setDrawColor(1);
@@ -1164,44 +1165,37 @@ void setup()
 
     delay(150);
 
-    // Phase 2 : Le bandeau d'information glisse proprement de bas en haut (64 à 46)
     for (int y = 64; y >= 46; y -= 2)
     {
         u8g2.clearBuffer();
 
-        // Le logo est maintenant affiché fixement dans sa "fenêtre" (Y = -9)
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
 
-        // Panneau noir montant
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, y, 128, 64 - y);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, y, 128, y); // Ligne supérieure de séparation
+        u8g2.drawLine(0, y, 128, y);
 
         u8g2.sendBuffer();
         delay(10);
     }
 
-    // Phase 3 : Le texte et la barre s'affichent SANS CHEVAUCHEMENT (Marge absolue)
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
 
-        // Bandeau Fixé (18 pixels)
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, 46, 128, 18);
         u8g2.setDrawColor(1);
         u8g2.drawLine(0, 46, 128, 46);
 
-        // Textes parfaitement calés
         u8g2.setFont(u8g2_font_helvB08_tr);
         drawStringLeft(4, 55, "CANuSEE");
 
         u8g2.setFont(u8g2_font_5x7_tr);
         drawStringRight(124, 55, version_string);
 
-        // Barre de chargement ultra précise (y=58, h=5)
         u8g2.drawFrame(4, 58, 120, 5);
         int barWidth = (i * 116) / 100;
         if (barWidth > 0)
@@ -1245,7 +1239,6 @@ void loop()
         server.handleClient();
         ElegantOTA.loop();
         dnsServer.processNextRequest();
-        // ATTENTION : On ne fait PLUS de "return;" ici pour laisser l'écran se rafraîchir !
     }
     if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
         processBLE();
@@ -1299,76 +1292,13 @@ void loop()
         }
     }
 
-    if (okPressed)
-    {
-        if (currentState == STATE_MENU)
-        {
-            int action = currentMenu[menuCursor].action;
-            if (action == ACT_CLOSE)
-                currentState = STATE_GAUGES;
-            else if (action == ACT_ENTER_CONFIG)
-            {
-                u8g2.clearBuffer();
-                drawStringCenter(30, "Hold MENU & Reboot");
-                u8g2.sendBuffer();
-                delay(2000);
-                restart_ESP();
-            }
-            else if (action == ACT_OPEN_STYLE_MENU)
-            {
-                buildStyleMenu();
-                currentState = STATE_STYLE_MENU;
-            }
-            else if (action == ACT_EDIT_MIN)
-                currentState = STATE_EDIT_MIN;
-            else if (action == ACT_EDIT_MAX)
-                currentState = STATE_EDIT_MAX;
-            else if (action == ACT_EDIT_SPEED)
-                currentState = STATE_EDIT_SPEED;
-            else if (action == ACT_EDIT_BRIGHTNESS)
-                currentState = STATE_EDIT_BRIGHTNESS;
-            else if (action >= ACT_GO_SCREEN_0 && action <= ACT_GO_SCREEN_0 + screenNumbers)
-            {
-                screenIndex = action - ACT_GO_SCREEN_0;
-                saveValues();
-                currentState = STATE_GAUGES;
-            }
-        }
-        else if (currentState == STATE_STYLE_MENU)
-        {
-            int action = currentMenu[menuCursor].action;
-            if (action == ACT_BACK_TO_MENU)
-            {
-                buildMenu();
-                currentState = STATE_MENU;
-            }
-            else if (action >= ACT_SET_STYLE_TEXT && action <= ACT_SET_STYLE_BAR)
-            {
-                int newStyle = action - ACT_SET_STYLE_TEXT;
-                if (screenIndex == 1)
-                    BOOST_SCREEN = newStyle;
-                else if (screenIndex == 2)
-                    IAT_SCREEN = newStyle;
-                else if (screenIndex == 3)
-                    ENGLOAD_SCREEN = newStyle;
-                else if (screenIndex == 4)
-                    COOLANT_SCREEN = newStyle;
-                saveValues();
-                buildMenu();
-                currentState = STATE_MENU;
-            }
-        }
-        else if (currentState >= STATE_EDIT_MIN && currentState <= STATE_EDIT_BRIGHTNESS)
-        {
-            saveValues();
-            buildMenu();
-            currentState = STATE_MENU;
-        }
-    }
-
-    // ==== RAFFRAICHISSEMENT ULTRA-RAPIDE 25 FPS (40ms) ====
+    // ==== GESTION INTELLIGENTE DU RAFRAICHISSEMENT (STABILITE WIFI) ====
+    // Mode conduite : 25 FPS (40ms) pour de la grande fluidité.
+    // Mode Config (WiFi) : 10 FPS (100ms) pour laisser l'ESP32 respirer et gérer le WiFi !
+    unsigned long refreshInterval = (currentState == STATE_CONFIG) ? 100 : 40;
     static unsigned long lastDrawTime = 0;
-    if (millis() - lastDrawTime > 40)
+
+    if (millis() - lastDrawTime > refreshInterval)
     {
         lastDrawTime = millis();
 
@@ -1408,7 +1338,6 @@ void loop()
         }
         else if (currentState == STATE_CONFIG)
         {
-            // Affiche l'écran OTA si MàJ en cours, sinon l'écran Config normal
             if (ota_updating)
             {
                 drawOTAScreen();
