@@ -1092,43 +1092,73 @@ void setup()
     setOledBrightness(OLED_BRIGHTNESS);
 
     // ==========================================
-    // NOUVELLE ANIMATION DE DÉMARRAGE CINÉMATIQUE
+    // ANIMATION DE DÉMARRAGE : SCANNER 3D HIGH-TECH
     // ==========================================
 
-    // Phase 1 : Apparition "Wipe" du logo depuis le centre (Effet Rideau)
-    for (int w = 0; w <= 64; w += 3)
+    // Phase 1 : Faisceau laser qui scanne l'écran de haut en bas pour révéler le logo 3008
+    for (int h = 0; h <= 64; h += 2)
     {
         u8g2.clearBuffer();
-        u8g2.setClipWindow(64 - w, 0, 64 + w, 64);
+
+        // Affiche l'image uniquement au-dessus de la ligne du laser
+        u8g2.setClipWindow(0, 0, 128, h);
         u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
-        u8g2.setMaxClipWindow(); // Réinitialise la fenêtre d'affichage
+        u8g2.setMaxClipWindow();
+
+        // Dessine le rayon laser horizontal (une double ligne très brillante)
+        if (h < 64)
+        {
+            u8g2.setDrawColor(1);
+            u8g2.drawLine(0, h, 128, h);
+            u8g2.drawLine(0, h + 1, 128, h + 1);
+        }
+
+        u8g2.sendBuffer();
+        delay(15); // Vitesse du scanner
+    }
+
+    delay(200); // Courte pause une fois le logo totalement révélé
+
+    // Phase 2 : Le bandeau d'information glisse de bas en haut (mécanique)
+    for (int y = 64; y >= 44; y -= 2)
+    {
+        u8g2.clearBuffer();
+        u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
+
+        // Dessine le panneau noir qui remonte progressivement
+        u8g2.setDrawColor(0);
+        u8g2.drawBox(0, y, 128, 64 - y);
+        u8g2.setDrawColor(1);
+        u8g2.drawLine(0, y, 128, y); // Ligne supérieure de séparation du bandeau
+
         u8g2.sendBuffer();
         delay(15);
     }
 
-    // Phase 2 : Le système boot et la barre de chargement se remplit
-    for (int i = 0; i <= 100; i += 5)
+    // Phase 3 : Le système s'initialise (Le texte s'affiche et la jauge se remplit rapidement)
+    for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
         u8g2.drawXBM(0, 0, 128, 64, epd_bitmap_logo_3008);
 
-        // Bandeau noir épuré
+        // Conserve le bandeau noir en place
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, 44, 128, 20);
         u8g2.setDrawColor(1);
+        u8g2.drawLine(0, 44, 128, 44);
 
-        // Textes
+        // Affiche les textes
         u8g2.setFont(u8g2_font_helvB10_tr);
-        drawStringCenter(53, "CANuSEE");
+        drawStringCenter(54, "CANuSEE");
         u8g2.setFont(u8g2_font_4x6_tr);
         drawStringCenter(62, version_string);
 
-        // Loading Bar fluide
-        u8g2.drawFrame(14, 55, 100, 2);
-        u8g2.drawBox(14, 55, i, 2);
+        // Barre de chargement fluide
+        u8g2.drawFrame(14, 56, 100, 2);
+        u8g2.drawBox(14, 56, i, 2);
 
         u8g2.sendBuffer();
-        delay(30);
+        delay(20);
     }
 
     if (!LittleFS.begin())
