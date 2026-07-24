@@ -771,27 +771,27 @@ void drawEditScreen(String title, String valueStr, float progress)
 
 void drawConnectingScreen()
 {
-    int logoY = -9;
-    u8g2.setClipWindow(0, 0, 128, 46);
+    int logoY = -14;
+    u8g2.setClipWindow(0, 0, 128, 42);
     u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
     u8g2.setMaxClipWindow();
 
     // Boîte noire au fond avec séparation nette
     u8g2.setDrawColor(0);
-    u8g2.drawBox(0, 46, 128, 18);
+    u8g2.drawBox(0, 42, 128, 22);
     u8g2.setDrawColor(1);
-    u8g2.drawLine(0, 46, 128, 46);
+    u8g2.drawLine(0, 42, 128, 42);
 
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(54, bleStatusStr);
+    drawStringCenter(52, bleStatusStr);
 
-    u8g2.drawFrame(4, 58, 120, 5);
+    u8g2.drawFrame(4, 56, 120, 6);
 
     if (connected)
     {
         int fill = (elmInitStep / 5.0) * 116;
         if (fill > 0)
-            u8g2.drawBox(6, 60, fill, 1);
+            u8g2.drawBox(6, 58, fill, 2);
     }
     else
     {
@@ -800,11 +800,10 @@ void drawConnectingScreen()
         int max_x = 116 - width;
         int pos = (millis() / 15) % (max_x * 2);
         int xOffset = (pos < max_x) ? pos : (max_x * 2) - pos;
-        u8g2.drawBox(6 + xOffset, 60, width, 1);
+        u8g2.drawBox(6 + xOffset, 58, width, 2);
     }
 }
 
-// Nouvel écran "MODE CONFIG" ultra pro
 void drawConfigScreen()
 {
     // Header inversé en haut
@@ -834,7 +833,6 @@ void drawConfigScreen()
     drawStringCenter(60, "http://192.168.4.1");
 }
 
-// Nouvel écran de statut pendant la Mise à Jour (OTA)
 void drawOTAScreen()
 {
     u8g2.setFont(u8g2_font_helvB12_tr);
@@ -1080,9 +1078,6 @@ void draw_GaugeScreen(uint8_t index)
     }
 }
 
-// ===============================================
-// AMELIORATION WIFI / CONFIG (STABILITE MAXIMALE)
-// ===============================================
 void startCaptivePortal()
 {
     WiFi.disconnect(true, true);
@@ -1140,10 +1135,9 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    int logoY = -9;
+    int logoY = -14;
 
-    // MODIFICATION ICI: Le laser s'arrête en h=44 pour ne pas déborder sur la ligne Y=46
-    for (int h = 0; h <= 44; h += 2)
+    for (int h = 0; h <= 42; h += 2)
     {
         u8g2.clearBuffer();
 
@@ -1151,7 +1145,7 @@ void setup()
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        if (h < 44)
+        if (h < 42)
         {
             u8g2.setDrawColor(1);
             u8g2.drawLine(0, h, 128, h);
@@ -1163,7 +1157,7 @@ void setup()
 
     delay(150);
 
-    for (int y = 64; y >= 46; y -= 2)
+    for (int y = 64; y >= 42; y -= 2)
     {
         u8g2.clearBuffer();
 
@@ -1184,20 +1178,20 @@ void setup()
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
 
         u8g2.setDrawColor(0);
-        u8g2.drawBox(0, 46, 128, 18);
+        u8g2.drawBox(0, 42, 128, 22);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, 46, 128, 46);
+        u8g2.drawLine(0, 42, 128, 42);
 
         u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(4, 55, "CANuSEE");
+        drawStringLeft(4, 52, "CANuSEE");
 
         u8g2.setFont(u8g2_font_5x7_tr);
-        drawStringRight(124, 55, version_string);
+        drawStringRight(124, 52, version_string);
 
-        u8g2.drawFrame(4, 58, 120, 5);
+        u8g2.drawFrame(4, 56, 120, 6);
         int barWidth = (i * 116) / 100;
         if (barWidth > 0)
-            u8g2.drawBox(6, 60, barWidth, 1);
+            u8g2.drawBox(6, 58, barWidth, 2);
 
         u8g2.sendBuffer();
         delay(15);
