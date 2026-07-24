@@ -1085,12 +1085,10 @@ void draw_GaugeScreen(uint8_t index)
 // ===============================================
 void startCaptivePortal()
 {
-    WiFi.disconnect(true, true); // Nettoie tout cache WiFi
+    WiFi.disconnect(true, true);
     delay(100);
     WiFi.mode(WIFI_AP);
 
-    // CRITIQUE : Désactive la mise en veille de la puce WiFi.
-    // Empêche les téléphones portables d'être éjectés du réseau !
     WiFi.setSleep(false);
     delay(100);
 
@@ -1098,7 +1096,6 @@ void startCaptivePortal()
     IPAddress netMsk(255, 255, 255, 0);
     WiFi.softAPConfig(apIP, apIP, netMsk);
 
-    // Fixe le canal Wi-Fi à 6 (ultra-stable) et limite à 4 appareils
     WiFi.softAP(ssid, "12345678", 6, 0, 4);
     delay(500);
 
@@ -1145,7 +1142,8 @@ void setup()
 
     int logoY = -9;
 
-    for (int h = 0; h <= 46; h += 2)
+    // MODIFICATION ICI: Le laser s'arrête en h=44 pour ne pas déborder sur la ligne Y=46
+    for (int h = 0; h <= 44; h += 2)
     {
         u8g2.clearBuffer();
 
@@ -1153,7 +1151,7 @@ void setup()
         u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        if (h < 46)
+        if (h < 44)
         {
             u8g2.setDrawColor(1);
             u8g2.drawLine(0, h, 128, h);
@@ -1292,9 +1290,6 @@ void loop()
         }
     }
 
-    // ==== GESTION INTELLIGENTE DU RAFRAICHISSEMENT (STABILITE WIFI) ====
-    // Mode conduite : 25 FPS (40ms) pour de la grande fluidité.
-    // Mode Config (WiFi) : 10 FPS (100ms) pour laisser l'ESP32 respirer et gérer le WiFi !
     unsigned long refreshInterval = (currentState == STATE_CONFIG) ? 100 : 40;
     static unsigned long lastDrawTime = 0;
 
