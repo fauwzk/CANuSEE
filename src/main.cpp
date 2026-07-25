@@ -29,17 +29,18 @@
 // =================================================================
 // CONFIGURATION DE L'UI DE DÉMARRAGE ET DE CONNEXION (AJUSTEMENTS)
 // =================================================================
-const int LOGO_OFFSET_Y = -5;
+const int LOGO_OFFSET_Y = -11;
 const int UI_BASE_Y = 40;
-const int UI_TEXT_Y = UI_BASE_Y + 13;
+const int UI_TEXT_Y = UI_BASE_Y + 10;
 const int UI_BAR_Y = UI_BASE_Y + 14;
 
 // =================================================================
 // CONFIGURATION DE L'AUTO-UPDATER GITHUB (HOTSPOT TELEPHONE)
 // =================================================================
-const char *HOTSPOT_SSID = "iPhone 15 Pro de Axel"; // <-- METS LE NOM DE TON PARTAGE DE CO ICI
-const char *HOTSPOT_PASS = "polentes";              // <-- METS LE MOT DE PASSE DU PARTAGE DE CO ICI
-const char *GITHUB_REPO = "Fauwzk/CANuSEE";         // <-- EXEMPLE: "Dupont/CANuSEE"
+const bool CHECK_UPDATE_ON_BOOT = true;             // <-- Mettre à false pour désactiver l'auto-update
+const char *HOTSPOT_SSID = "iPhone 15 Pro de Axel"; // <-- NOM EXACT
+const char *HOTSPOT_PASS = "polentes";              // <-- TON MOT DE PASSE
+const char *GITHUB_REPO = "fauwzk/CANuSEE";         // <-- TON REPO GITHUB
 // =================================================================
 
 const char *ssid = "CANuSEE_Config";
@@ -78,7 +79,7 @@ enum AppState
     STATE_EDIT_SPEED,
     STATE_EDIT_BRIGHTNESS,
     STATE_CONFIG,
-    STATE_AUTO_UPDATE // Nouvel état pour l'Updater
+    STATE_AUTO_UPDATE
 };
 AppState currentState = STATE_CONNECTING;
 
@@ -624,10 +625,10 @@ void drawVectorIcon(int cx, int cy, int type)
         for (int i = -10; i <= 10; i += 5)
             u8g2.drawLine(cx - 12, cy + i, cx + 12, cy + i);
         break;
-    case ICON_UPDATE:                           // Cloud Download Icon
-        u8g2.drawLine(cx, cy - 12, cx, cy + 8); // Flèche centre
+    case ICON_UPDATE:
+        u8g2.drawLine(cx, cy - 12, cx, cy + 8);
         u8g2.drawTriangle(cx, cy + 12, cx - 6, cy + 4, cx + 6, cy + 4);
-        u8g2.drawFrame(cx - 14, cy + 14, 28, 4); // Boîte
+        u8g2.drawFrame(cx - 14, cy + 14, 28, 4);
         break;
     }
 }
@@ -868,16 +869,248 @@ void drawOTAScreen()
     drawStringCenter(62, "Do not power off !");
 }
 
-// Nouvel écran de statut pour l'Auto-Updater GitHub
-void drawAutoUpdateStatusScreen(String msg)
+void drawAutoUpdateStatusScreen(String title, String status, String details)
 {
     u8g2.clearBuffer();
+
+    // Header
+    u8g2.setDrawColor(1);
+    u8g2.drawBox(0, 0, 128, 14);
+    u8g2.setDrawColor(0);
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringCenter(10, title);
+    u8g2.setDrawColor(1);
+
+    // Status principal
     u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(20, "AUTO UPDATE");
-    u8g2.drawLine(0, 26, 128, 26);
-    u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(44, msg);
+    drawStringCenter(36, status);
+
+    // Ligne séparatrice
+    u8g2.drawLine(10, 46, 118, 46);
+
+    // Détails (Debug) en bas
+    u8g2.setFont(u8g2_font_5x7_tr);
+    drawStringCenter(58, details);
+
     u8g2.sendBuffer();
+}
+
+void executeCloudUpdate(bool isBootCheck)
+{
+    String screenTitle = isBootCheck ? "BOOT CHECK" : "CLOUD UPDATE";
+
+    Serial.println("\n========================================");
+    Serial.println("  STARTING CLOUD UPDATE / WI-FI DIAG  ");
+    Serial.println("========================================");
+
+    // 1. On coupe le Bluetooth proprement
+    if (!isBootCheck)
+    {
+        Serial.println("[RADIO] Disconnecting BLE to free the antenna...");
+        BLEDevice::deinit(true);
+        delay(500);
+    }
+
+    Serial.println("[WIFI] Initializing standard Wi-Fi...");
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(); // Soft disconnect pour ne pas effrayer le LwIP
+    delay(200);
+
+    // === FIX MATERIEL : BAISSE DE LA PUISSANCE (Anti Reason 2) ===
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.setSleep(false);
+
+    // =======================================================
+    // SCAN ET AUTO-MATCH (POUR PASSER LES CARACTÈRES INVISIBLES)
+    // =======================================================
+    drawAutoUpdateStatusScreen(screenTitle, "Scanning...", "Finding true SSID");
+    Serial.println("[SCAN] Looking for exact SSID match...");
+
+    int n = WiFi.scanNetworks();
+    String exactSSID = String(HOTSPOT_SSID);
+    int32_t targetChannel = 0;
+    uint8_t targetBSSID[6];
+    bool targetFound = false;
+
+    if (n > 0)
+    {
+        String searchPrefix = String(HOTSPOT_SSID).substring(0, 5);
+
+        for (int i = 0; i < n; ++i)
+        {
+            if (WiFi.SSID(i).indexOf(searchPrefix) >= 0)
+            {
+                exactSSID = WiFi.SSID(i);
+                targetChannel = WiFi.channel(i);
+                memcpy(targetBSSID, WiFi.BSSID(i), 6);
+                targetFound = true;
+                Serial.printf("[SCAN] FOUND EXACT MATCH: '%s' (RSSI: %d dBm, CH: %d)\n", exactSSID.c_str(), WiFi.RSSI(i), targetChannel);
+                break;
+            }
+        }
+    }
+    WiFi.scanDelete();
+    // =======================================================
+
+    // Mouchard Wi-Fi : Permet de connaître la vraie raison du blocage
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+                 { Serial.printf("\n[WIFI-EVENT] Disconnected! IEEE Reason Code: %d\n", info.wifi_sta_disconnected.reason); }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
+    Serial.printf("[WIFI] Attempting connection to Target SSID: '%s'\n", exactSSID.c_str());
+
+    // Connexion chirurgicale : Si on a trouvé le BSSID, on s'y greffe directement
+    if (targetFound)
+    {
+        WiFi.begin(exactSSID.c_str(), HOTSPOT_PASS, targetChannel, targetBSSID);
+    }
+    else
+    {
+        WiFi.begin(exactSSID.c_str(), HOTSPOT_PASS);
+    }
+
+    int waitSecs = 0;
+
+    // Boucle simple : on attend 15 secondes
+    while (WiFi.status() != WL_CONNECTED && waitSecs < 15)
+    {
+        int status = WiFi.status();
+        Serial.printf("[WIFI] Waiting... Status code: %d | Time: %ds\n", status, waitSecs);
+
+        String statusStr = "State: " + String(status) + " [" + String(waitSecs) + "s]";
+        drawAutoUpdateStatusScreen(screenTitle, "Connecting...", statusStr);
+
+        delay(1000);
+        waitSecs++;
+    }
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("\n[ERROR] Connection failed!");
+        drawAutoUpdateStatusScreen(screenTitle, "Wi-Fi Failed!", "Check Serial Monitor!");
+
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(4000);
+
+        if (!isBootCheck)
+            ESP.restart();
+        return;
+    }
+
+    Serial.println("[NETWORK] Local IP assigned: " + WiFi.localIP().toString());
+    drawAutoUpdateStatusScreen(screenTitle, "Wi-Fi Connected!", "IP: " + WiFi.localIP().toString());
+    delay(1500);
+
+    Serial.println("\n[GITHUB] Checking for latest release...");
+    Serial.println("[GITHUB] Target Repo: " + String(GITHUB_REPO));
+    drawAutoUpdateStatusScreen(screenTitle, "Checking GitHub...", "Repo: " + String(GITHUB_REPO));
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Important pour les API HTTPS sans certificat
+
+    HTTPClient http;
+    http.begin(client, "https://github.com/" + String(GITHUB_REPO) + "/releases/latest");
+    const char *headerKeys[] = {"Location"};
+    http.collectHeaders(headerKeys, 1);
+
+    int httpCode = http.GET();
+    String latestTag = "";
+
+    Serial.printf("[GITHUB] API HTTP Response Code: %d\n", httpCode);
+
+    // GitHub API renvoie un 302 Redirect vers le bon tag
+    if (httpCode == HTTP_CODE_FOUND || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+    {
+        String location = http.header("Location");
+        Serial.println("[GITHUB] Redirect Location: " + location);
+        int lastSlash = location.lastIndexOf('/');
+        if (lastSlash > 0)
+        {
+            latestTag = location.substring(lastSlash + 1);
+        }
+    }
+    http.end();
+
+    if (latestTag == "")
+    {
+        Serial.println("[ERROR] Could not parse latest tag. Repository might be private or invalid.");
+        drawAutoUpdateStatusScreen(screenTitle, "GitHub Error", "Repo not found / No Release.");
+        delay(3000);
+        if (!isBootCheck)
+            ESP.restart();
+        return;
+    }
+
+    Serial.println("[GITHUB] Latest Tag on GitHub: " + latestTag);
+    Serial.println("[GITHUB] Current Firmware Tag: " + String(FW_VERSION));
+
+    if (latestTag == String(FW_VERSION))
+    {
+        Serial.println("[UPDATE] Firmware is already up to date. Skipping update.");
+        drawAutoUpdateStatusScreen(screenTitle, "Up to Date!", "Version: " + latestTag);
+        delay(2000);
+        if (!isBootCheck)
+            ESP.restart();
+        return;
+    }
+
+    Serial.println("[UPDATE] New version found! Starting OTA Process...");
+    drawAutoUpdateStatusScreen(screenTitle, "New Version Found!", "Downloading: " + latestTag);
+    delay(1500);
+
+    String fsURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/littlefs.bin";
+    String fwURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/firmware.bin";
+
+    Serial.println("[OTA] LittleFS URL: " + fsURL);
+    Serial.println("[OTA] Firmware URL: " + fwURL);
+
+    httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+    // Callback pour animer l'écran OTA existant
+    httpUpdate.onProgress([](int current, int final)
+                          {
+        ota_progress = (float)current / (float)final;
+        if (current % (final/10) == 0) {
+             Serial.printf("[OTA] Progress: %d%%\n", (int)(ota_progress * 100));
+        }
+        u8g2.clearBuffer();
+        drawOTAScreen();
+        u8g2.sendBuffer(); });
+
+    // 1. Mise à jour de LittleFS
+    drawAutoUpdateStatusScreen(screenTitle, "Updating FS...", "Please wait...");
+    t_httpUpdate_return retFS = httpUpdate.updateSpiffs(client, fsURL);
+
+    if (retFS == HTTP_UPDATE_OK)
+    {
+        Serial.println("[OTA] LittleFS update SUCCESS.");
+        Serial.println("[OTA] Starting main Firmware update...");
+        drawAutoUpdateStatusScreen(screenTitle, "Updating FW...", "Please wait...");
+
+        // 2. Mise à jour du Firmware principal
+        t_httpUpdate_return retFW = httpUpdate.update(client, fwURL);
+
+        if (retFW == HTTP_UPDATE_OK)
+        {
+            Serial.println("[OTA] Firmware update SUCCESS. Rebooting...");
+            drawAutoUpdateStatusScreen(screenTitle, "Success!", "Rebooting...");
+            delay(1000);
+            ESP.restart();
+        }
+        else
+        {
+            Serial.printf("[OTA] Firmware update FAILED. Error: %s\n", httpUpdate.getLastErrorString().c_str());
+        }
+    }
+    else
+    {
+        Serial.printf("[OTA] LittleFS update FAILED. Error: %s\n", httpUpdate.getLastErrorString().c_str());
+    }
+
+    drawAutoUpdateStatusScreen(screenTitle, "Update Failed!", "HTTP/Network Error");
+    delay(3000);
+    if (!isBootCheck)
+        ESP.restart();
 }
 
 #define AREA_CHART_HISTORY 94
@@ -1108,112 +1341,6 @@ void draw_GaugeScreen(uint8_t index)
     }
 }
 
-// =========================================================
-// FONCTION AUTO-UPDATE DEPUIS GITHUB
-// =========================================================
-void performAutoUpdate()
-{
-    WiFi.disconnect(true, true);
-    delay(100);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(HOTSPOT_SSID, HOTSPOT_PASS);
-
-    drawAutoUpdateStatusScreen("Connecting Wi-Fi...");
-
-    int timeout = 0;
-    while (WiFi.status() != WL_CONNECTED && timeout < 20)
-    {
-        delay(500);
-        timeout++;
-    }
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        drawAutoUpdateStatusScreen("Wi-Fi Timeout!");
-        delay(3000);
-        currentState = STATE_MENU;
-        return;
-    }
-
-    drawAutoUpdateStatusScreen("Checking GitHub...");
-
-    WiFiClientSecure client;
-    client.setInsecure(); // Important pour les API HTTPS sans certificat
-
-    HTTPClient http;
-    http.begin(client, "https://github.com/" + String(GITHUB_REPO) + "/releases/latest");
-    const char *headerKeys[] = {"Location"};
-    http.collectHeaders(headerKeys, 1);
-
-    int httpCode = http.GET();
-    String latestTag = "";
-
-    // GitHub API renvoie un 302 Redirect vers le bon tag
-    if (httpCode == HTTP_CODE_FOUND || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
-    {
-        String location = http.header("Location");
-        int lastSlash = location.lastIndexOf('/');
-        if (lastSlash > 0)
-        {
-            latestTag = location.substring(lastSlash + 1);
-        }
-    }
-    http.end();
-
-    if (latestTag == "")
-    {
-        drawAutoUpdateStatusScreen("Repo not found!");
-        delay(3000);
-        currentState = STATE_MENU;
-        return;
-    }
-
-    if (latestTag == String(FW_VERSION))
-    {
-        drawAutoUpdateStatusScreen("Already Up to Date!");
-        delay(3000);
-        currentState = STATE_MENU;
-        return;
-    }
-
-    drawAutoUpdateStatusScreen("Updating FS...");
-
-    String fsURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/littlefs.bin";
-    String fwURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/firmware.bin";
-
-    httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-
-    // Callback pour animer l'écran OTA existant
-    httpUpdate.onProgress([](int current, int final)
-                          {
-        ota_progress = (float)current / (float)final;
-        u8g2.clearBuffer();
-        drawOTAScreen();
-        u8g2.sendBuffer(); });
-
-    // 1. Mise à jour de LittleFS
-    t_httpUpdate_return retFS = httpUpdate.updateSpiffs(client, fsURL);
-
-    if (retFS == HTTP_UPDATE_OK)
-    {
-        drawAutoUpdateStatusScreen("Updating FW...");
-
-        // 2. Mise à jour du Firmware principal
-        t_httpUpdate_return retFW = httpUpdate.update(client, fwURL);
-
-        if (retFW == HTTP_UPDATE_OK)
-        {
-            drawAutoUpdateStatusScreen("Success! Rebooting...");
-            delay(1000);
-            ESP.restart();
-        }
-    }
-
-    drawAutoUpdateStatusScreen("Update Failed!");
-    delay(3000);
-    currentState = STATE_MENU;
-}
-
 void startCaptivePortal()
 {
     WiFi.disconnect(true, true);
@@ -1271,6 +1398,7 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
+    // Animation Laser
     for (int h = 0; h <= UI_BASE_Y; h += 2)
     {
         u8g2.clearBuffer();
@@ -1291,6 +1419,7 @@ void setup()
 
     delay(150);
 
+    // Bandeau glissant
     for (int y = 64; y >= UI_BASE_Y; y -= 2)
     {
         u8g2.clearBuffer();
@@ -1306,6 +1435,7 @@ void setup()
         delay(10);
     }
 
+    // Apparition du texte de version
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
@@ -1331,6 +1461,8 @@ void setup()
         delay(15);
     }
 
+    delay(500);
+
     if (!LittleFS.begin())
     {
         u8g2.clearBuffer();
@@ -1347,6 +1479,13 @@ void setup()
     }
     else
     {
+        // === CONTROLE DE MISE A JOUR AU DEMARRAGE ===
+        if (CHECK_UPDATE_ON_BOOT)
+        {
+            executeCloudUpdate(true);
+        }
+
+        // Démarrage nominal du BLE
         WiFi.mode(WIFI_OFF);
         BLEDevice::init("CANuSEE");
         BLEScan *pBLEScan = BLEDevice::getScan();
@@ -1360,11 +1499,11 @@ void setup()
 
 void loop()
 {
-    // Mode Auto Update Bloquant
+    // Mode Auto Update Manuel depuis le Menu
     if (currentState == STATE_AUTO_UPDATE)
     {
-        performAutoUpdate();
-        return; // Le return évite de dessiner l'UI par dessus pendant la màj
+        executeCloudUpdate(false);
+        return;
     }
 
     if (currentState == STATE_CONFIG)
