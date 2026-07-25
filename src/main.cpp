@@ -11,6 +11,11 @@
 #include <ElegantOTA.h>
 #include "version.h"
 
+// Librairies requises pour l'auto-update
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
@@ -20,6 +25,22 @@
 #define BTN_DOWN 1
 #define BTN_OK 3
 #define BTN_MENU 6
+
+// =================================================================
+// CONFIGURATION DE L'UI DE DÉMARRAGE ET DE CONNEXION (AJUSTEMENTS)
+// =================================================================
+const int LOGO_OFFSET_Y = -11;
+const int UI_BASE_Y = 40;
+const int UI_TEXT_Y = UI_BASE_Y + 10;
+const int UI_BAR_Y = UI_BASE_Y + 14;
+
+// =================================================================
+// CONFIGURATION DE L'AUTO-UPDATER GITHUB (HOTSPOT TELEPHONE)
+// =================================================================
+const char *HOTSPOT_SSID = "iPhone 15 Pro de Axel"; // <-- METS LE NOM DE TON PARTAGE DE CO ICI
+const char *HOTSPOT_PASS = "polentes";              // <-- METS LE MOT DE PASSE DU PARTAGE DE CO ICI
+const char *GITHUB_REPO = "Fauwzk/CANuSEE";         // <-- EXEMPLE: "Dupont/CANuSEE"
+// =================================================================
 
 const char *ssid = "CANuSEE_Config";
 WebServer server(80);
@@ -43,15 +64,6 @@ struct Settings
 #define EEPROM_SIZE sizeof(Settings)
 Settings cfg;
 
-// =================================================================
-// CONFIGURATION DE L'UI DE DÉMARRAGE ET DE CONNEXION (AJUSTEMENTS)
-// =================================================================
-const int LOGO_OFFSET_Y = -11;        // Décalage vertical du logo (-11 le descend un peu)
-const int UI_BASE_Y = 40;             // Hauteur de la ligne de séparation (40 la remonte)
-const int UI_TEXT_Y = UI_BASE_Y + 10; // Hauteur des textes (CANuSEE / Status)
-const int UI_BAR_Y = UI_BASE_Y + 14;  // Hauteur de la barre de progression
-// =================================================================
-
 int BOOST_SCREEN = 0, ENGLOAD_SCREEN = 0, COOLANT_SCREEN = 0, IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2, TARGET_SPEED = 100, OLED_BRIGHTNESS = 255;
 
@@ -65,7 +77,8 @@ enum AppState
     STATE_EDIT_MAX,
     STATE_EDIT_SPEED,
     STATE_EDIT_BRIGHTNESS,
-    STATE_CONFIG
+    STATE_CONFIG,
+    STATE_AUTO_UPDATE // Nouvel état pour l'Updater
 };
 AppState currentState = STATE_CONNECTING;
 
@@ -108,7 +121,8 @@ enum IconType
     ICON_BLE,
     ICON_DASH,
     ICON_SLIDERS,
-    ICON_AIR
+    ICON_AIR,
+    ICON_UPDATE
 };
 
 #define MAX_MENU_ITEMS 24
@@ -129,6 +143,7 @@ int menuSize = 0, menuCursor = 0;
 #define ACT_EDIT_SPEED 4
 #define ACT_EDIT_BRIGHTNESS 5
 #define ACT_ENTER_CONFIG 6
+#define ACT_AUTO_UPDATE 7
 #define ACT_GO_SCREEN_0 10
 #define ACT_BACK_TO_MENU 30
 #define ACT_SET_STYLE_TEXT 31
@@ -609,6 +624,11 @@ void drawVectorIcon(int cx, int cy, int type)
         for (int i = -10; i <= 10; i += 5)
             u8g2.drawLine(cx - 12, cy + i, cx + 12, cy + i);
         break;
+    case ICON_UPDATE:                           // Cloud Download Icon
+        u8g2.drawLine(cx, cy - 12, cx, cy + 8); // Flèche centre
+        u8g2.drawTriangle(cx, cy + 12, cx - 6, cy + 4, cx + 6, cy + 4);
+        u8g2.drawFrame(cx - 14, cy + 14, 28, 4); // Boîte
+        break;
     }
 }
 
@@ -690,6 +710,7 @@ void buildMenu()
     currentMenu[menuSize++] = {"Speedometer", ACT_GO_SCREEN_0 + 7, ICON_GAUGE};
     currentMenu[menuSize++] = {"BLE Status", ACT_GO_SCREEN_0 + 8, ICON_BLE};
 
+    currentMenu[menuSize++] = {"Cloud Update", ACT_AUTO_UPDATE, ICON_UPDATE};
     currentMenu[menuSize++] = {"Mode Config", ACT_ENTER_CONFIG, ICON_GEAR};
     currentMenu[menuSize++] = {"Exit Menu", ACT_CLOSE, ICON_EXIT};
     menuCursor = 0;
@@ -730,7 +751,6 @@ void draw_StatusBar(String title)
     drawStringLeft(0, 8, title);
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringRight(128, 8, String(screenIndex + 1) + "/" + String(screenNumbers));
-    // Ligne de séparation de l'OS élégante
     u8g2.drawLine(0, 10, 128, 10);
 }
 
@@ -764,7 +784,6 @@ void drawEditScreen(String title, String valueStr, float progress)
     u8g2.setFont(u8g2_font_helvB18_tr);
     drawStringCenter(36, valueStr);
 
-    // Slider Bar Automatique
     u8g2.drawFrame(14, 42, 100, 6);
     int fillWidth = progress * 96;
     fillWidth = constrain(fillWidth, 0, 96);
@@ -810,10 +829,8 @@ void drawConnectingScreen()
     }
 }
 
-// Nouvel écran "MODE CONFIG" ultra pro
 void drawConfigScreen()
 {
-    // Header inversé en haut
     u8g2.setDrawColor(1);
     u8g2.drawBox(0, 0, 128, 14);
     u8g2.setDrawColor(0);
@@ -821,41 +838,46 @@ void drawConfigScreen()
     drawStringCenter(10, "PORTAL CONFIG");
     u8g2.setDrawColor(1);
 
-    // Icône stylisée Signal Wi-Fi à gauche
-    int cx = 18, cy = 30;
+    int cx = 14, cy = 30;
     u8g2.drawBox(cx - 2, cy + 4, 4, 4);
     u8g2.drawFrame(cx - 6, cy, 12, 2);
     u8g2.drawFrame(cx - 10, cy - 4, 20, 2);
 
-    // Textes identifiants WiFi
-    u8g2.setFont(u8g2_font_helvB08_tr);
-    drawStringLeft(36, 26, "SSID: " + String(ssid));
     u8g2.setFont(u8g2_font_5x7_tr);
-    drawStringLeft(36, 38, "PASS: 12345678");
+    drawStringLeft(28, 26, "SSID: " + String(ssid));
+    drawStringLeft(28, 38, "PASS: 12345678");
 
     u8g2.drawLine(10, 46, 118, 46);
 
-    // L'IP très lisible en bas
-    u8g2.setFont(u8g2_font_helvB10_tr);
-    drawStringCenter(60, "http://192.168.4.1");
+    u8g2.setFont(u8g2_font_helvB08_tr);
+    drawStringCenter(58, "http://192.168.4.1");
 }
 
-// Nouvel écran de statut pendant la Mise à Jour (OTA)
 void drawOTAScreen()
 {
     u8g2.setFont(u8g2_font_helvB12_tr);
     drawStringCenter(16, "UPDATING...");
 
-    // Grande barre de progression au centre
     u8g2.drawFrame(14, 30, 100, 10);
     int fill = ota_progress * 96;
     if (fill > 0)
         u8g2.drawBox(16, 32, fill, 6);
 
-    // Pourcentage et avertissement
     u8g2.setFont(u8g2_font_5x7_tr);
     drawStringCenter(52, String((int)(ota_progress * 100)) + " %");
     drawStringCenter(62, "Do not power off !");
+}
+
+// Nouvel écran de statut pour l'Auto-Updater GitHub
+void drawAutoUpdateStatusScreen(String msg)
+{
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_helvB10_tr);
+    drawStringCenter(20, "AUTO UPDATE");
+    u8g2.drawLine(0, 26, 128, 26);
+    u8g2.setFont(u8g2_font_helvR08_tr);
+    drawStringCenter(44, msg);
+    u8g2.sendBuffer();
 }
 
 #define AREA_CHART_HISTORY 94
@@ -1086,6 +1108,112 @@ void draw_GaugeScreen(uint8_t index)
     }
 }
 
+// =========================================================
+// FONCTION AUTO-UPDATE DEPUIS GITHUB
+// =========================================================
+void performAutoUpdate()
+{
+    WiFi.disconnect(true, true);
+    delay(100);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(HOTSPOT_SSID, HOTSPOT_PASS);
+
+    drawAutoUpdateStatusScreen("Connecting Wi-Fi...");
+
+    int timeout = 0;
+    while (WiFi.status() != WL_CONNECTED && timeout < 20)
+    {
+        delay(500);
+        timeout++;
+    }
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        drawAutoUpdateStatusScreen("Wi-Fi Timeout!");
+        delay(3000);
+        currentState = STATE_MENU;
+        return;
+    }
+
+    drawAutoUpdateStatusScreen("Checking GitHub...");
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Important pour les API HTTPS sans certificat
+
+    HTTPClient http;
+    http.begin(client, "https://github.com/" + String(GITHUB_REPO) + "/releases/latest");
+    const char *headerKeys[] = {"Location"};
+    http.collectHeaders(headerKeys, 1);
+
+    int httpCode = http.GET();
+    String latestTag = "";
+
+    // GitHub API renvoie un 302 Redirect vers le bon tag
+    if (httpCode == HTTP_CODE_FOUND || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+    {
+        String location = http.header("Location");
+        int lastSlash = location.lastIndexOf('/');
+        if (lastSlash > 0)
+        {
+            latestTag = location.substring(lastSlash + 1);
+        }
+    }
+    http.end();
+
+    if (latestTag == "")
+    {
+        drawAutoUpdateStatusScreen("Repo not found!");
+        delay(3000);
+        currentState = STATE_MENU;
+        return;
+    }
+
+    if (latestTag == String(FW_VERSION))
+    {
+        drawAutoUpdateStatusScreen("Already Up to Date!");
+        delay(3000);
+        currentState = STATE_MENU;
+        return;
+    }
+
+    drawAutoUpdateStatusScreen("Updating FS...");
+
+    String fsURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/littlefs.bin";
+    String fwURL = "https://github.com/" + String(GITHUB_REPO) + "/releases/download/" + latestTag + "/firmware.bin";
+
+    httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+    // Callback pour animer l'écran OTA existant
+    httpUpdate.onProgress([](int current, int final)
+                          {
+        ota_progress = (float)current / (float)final;
+        u8g2.clearBuffer();
+        drawOTAScreen();
+        u8g2.sendBuffer(); });
+
+    // 1. Mise à jour de LittleFS
+    t_httpUpdate_return retFS = httpUpdate.updateSpiffs(client, fsURL);
+
+    if (retFS == HTTP_UPDATE_OK)
+    {
+        drawAutoUpdateStatusScreen("Updating FW...");
+
+        // 2. Mise à jour du Firmware principal
+        t_httpUpdate_return retFW = httpUpdate.update(client, fwURL);
+
+        if (retFW == HTTP_UPDATE_OK)
+        {
+            drawAutoUpdateStatusScreen("Success! Rebooting...");
+            delay(1000);
+            ESP.restart();
+        }
+    }
+
+    drawAutoUpdateStatusScreen("Update Failed!");
+    delay(3000);
+    currentState = STATE_MENU;
+}
+
 void startCaptivePortal()
 {
     WiFi.disconnect(true, true);
@@ -1143,7 +1271,6 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    // Phase 1 : Scanner Laser vertical rapide (Uniquement dans la zone du logo)
     for (int h = 0; h <= UI_BASE_Y; h += 2)
     {
         u8g2.clearBuffer();
@@ -1164,7 +1291,6 @@ void setup()
 
     delay(150);
 
-    // Phase 2 : Le bandeau glisse
     for (int y = 64; y >= UI_BASE_Y; y -= 2)
     {
         u8g2.clearBuffer();
@@ -1180,7 +1306,6 @@ void setup()
         delay(10);
     }
 
-    // Phase 3 : Remplissage de la barre
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
@@ -1235,12 +1360,20 @@ void setup()
 
 void loop()
 {
+    // Mode Auto Update Bloquant
+    if (currentState == STATE_AUTO_UPDATE)
+    {
+        performAutoUpdate();
+        return; // Le return évite de dessiner l'UI par dessus pendant la màj
+    }
+
     if (currentState == STATE_CONFIG)
     {
         server.handleClient();
         ElegantOTA.loop();
         dnsServer.processNextRequest();
     }
+
     if (currentState == STATE_GAUGES || currentState == STATE_CONNECTING)
         processBLE();
 
@@ -1290,6 +1423,77 @@ void loop()
         {
             OLED_BRIGHTNESS = constrain(OLED_BRIGHTNESS + (dir * -25), 0, 255);
             setOledBrightness(OLED_BRIGHTNESS);
+        }
+    }
+
+    if (okPressed)
+    {
+        if (currentState == STATE_MENU)
+        {
+            int action = currentMenu[menuCursor].action;
+            if (action == ACT_CLOSE)
+                currentState = STATE_GAUGES;
+            else if (action == ACT_AUTO_UPDATE)
+            {
+                currentState = STATE_AUTO_UPDATE;
+            }
+            else if (action == ACT_ENTER_CONFIG)
+            {
+                u8g2.clearBuffer();
+                drawStringCenter(30, "Hold MENU & Reboot");
+                u8g2.sendBuffer();
+                delay(2000);
+                restart_ESP();
+            }
+            else if (action == ACT_OPEN_STYLE_MENU)
+            {
+                buildStyleMenu();
+                currentState = STATE_STYLE_MENU;
+            }
+            else if (action == ACT_EDIT_MIN)
+                currentState = STATE_EDIT_MIN;
+            else if (action == ACT_EDIT_MAX)
+                currentState = STATE_EDIT_MAX;
+            else if (action == ACT_EDIT_SPEED)
+                currentState = STATE_EDIT_SPEED;
+            else if (action == ACT_EDIT_BRIGHTNESS)
+                currentState = STATE_EDIT_BRIGHTNESS;
+            else if (action >= ACT_GO_SCREEN_0 && action <= ACT_GO_SCREEN_0 + screenNumbers)
+            {
+                screenIndex = action - ACT_GO_SCREEN_0;
+                saveValues();
+                currentState = STATE_GAUGES;
+            }
+        }
+        else if (currentState == STATE_STYLE_MENU)
+        {
+            int action = currentMenu[menuCursor].action;
+            if (action == ACT_BACK_TO_MENU)
+            {
+                buildMenu();
+                currentState = STATE_MENU;
+            }
+            else if (action >= ACT_SET_STYLE_TEXT && action <= ACT_SET_STYLE_BAR)
+            {
+                int newStyle = action - ACT_SET_STYLE_TEXT;
+                if (screenIndex == 1)
+                    BOOST_SCREEN = newStyle;
+                else if (screenIndex == 2)
+                    IAT_SCREEN = newStyle;
+                else if (screenIndex == 3)
+                    ENGLOAD_SCREEN = newStyle;
+                else if (screenIndex == 4)
+                    COOLANT_SCREEN = newStyle;
+                saveValues();
+                buildMenu();
+                currentState = STATE_MENU;
+            }
+        }
+        else if (currentState >= STATE_EDIT_MIN && currentState <= STATE_EDIT_BRIGHTNESS)
+        {
+            saveValues();
+            buildMenu();
+            currentState = STATE_MENU;
         }
     }
 
