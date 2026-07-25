@@ -37,7 +37,7 @@ const int UI_BAR_Y = UI_BASE_Y + 15;
 // =================================================================
 // CONFIGURATION DE L'AUTO-UPDATER GITHUB (HOTSPOT TELEPHONE)
 // =================================================================
-const bool CHECK_UPDATE_ON_BOOT = true;             // <-- Mettre à false pour désactiver l'auto-update
+bool CHECK_UPDATE_ON_BOOT = false;                  // <-- Mettre à false pour désactiver l'auto-update
 const char *HOTSPOT_SSID = "iPhone 15 Pro de Axel"; // <-- NOM EXACT
 const char *HOTSPOT_PASS = "polentes";              // <-- TON MOT DE PASSE
 const char *GITHUB_REPO = "fauwzk/CANuSEE";         // <-- TON REPO GITHUB
@@ -60,6 +60,7 @@ struct Settings
     int tick_line_gauge;
     int target_speed;
     int brightness;
+    bool check_update_boot; // <-- NOUVELLE VARIABLE POUR LE BOOT
 };
 
 #define EEPROM_SIZE sizeof(Settings)
@@ -641,9 +642,27 @@ String generateWebPage()
         return "<html><body><h3>File not found</h3></body></html>";
     String html = file.readString();
     file.close();
+
+    // Remplacement des variables pour afficher l'état actuel de l'ESP sur la page web
+    html.replace("%TICKS%", String(TICK_LINE_GAUGE));
+    html.replace("%BRIGHTNESS_PCT%", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)));
+    html.replace("%MIN%", String(TURBO_MIN_BAR, 2));
+    html.replace("%MAX%", String(TURBO_MAX_BAR, 2));
+    html.replace("%MAX_SPEED%", String(TARGET_SPEED));
+    html.replace("%CHECK_UPDATE_BOOT%", CHECK_UPDATE_ON_BOOT ? "checked" : "");
+
+    // Remplacement intelligent pour les menus déroulants
+    const char *typeNames[] = {"TEXT", "GAUGE", "DIAL", "BAR"};
+    for (int i = 0; i < 4; i++)
+    {
+        html.replace("%SELECTED_BOOST_" + String(typeNames[i]) + "%", BOOST_SCREEN == i ? "selected" : "");
+        html.replace("%SELECTED_IAT_" + String(typeNames[i]) + "%", IAT_SCREEN == i ? "selected" : "");
+        html.replace("%SELECTED_LOAD_" + String(typeNames[i]) + "%", ENGLOAD_SCREEN == i ? "selected" : "");
+        html.replace("%SELECTED_COOLANT_" + String(typeNames[i]) + "%", COOLANT_SCREEN == i ? "selected" : "");
+    }
+
     return html;
 }
-
 void saveValues()
 {
     cfg.last_screen = screenIndex;
@@ -656,6 +675,7 @@ void saveValues()
     cfg.tick_line_gauge = TICK_LINE_GAUGE;
     cfg.target_speed = TARGET_SPEED;
     cfg.brightness = OLED_BRIGHTNESS;
+    cfg.check_update_boot = CHECK_UPDATE_ON_BOOT; // Sauvegarde du Toggle
     EEPROM.put(0, cfg);
     EEPROM.commit();
 }
@@ -673,6 +693,7 @@ void loadValues()
     TICK_LINE_GAUGE = (cfg.tick_line_gauge > 0) ? cfg.tick_line_gauge : 2;
     TARGET_SPEED = constrain(cfg.target_speed, 10, 300);
     OLED_BRIGHTNESS = constrain(cfg.brightness, 0, 255);
+    CHECK_UPDATE_ON_BOOT = cfg.check_update_boot; // Chargement du Toggle
 }
 
 void restart_ESP()
@@ -1364,8 +1385,42 @@ void startCaptivePortal()
 void startServer()
 {
     startCaptivePortal();
+
     server.on("/", HTTP_GET, []()
               { server.send(200, "text/html", generateWebPage()); });
+
+    // --- RECEPTION DU FORMULAIRE ET SAUVEGARDE ---
+    server.on("/save", HTTP_POST, []()
+              {
+        if (server.hasArg("ticks")) TICK_LINE_GAUGE = server.arg("ticks").toInt();
+        if (server.hasArg("brightness")) {
+            OLED_BRIGHTNESS = map(server.arg("brightness").toInt(), 0, 100, 0, 255);
+            setOledBrightness(OLED_BRIGHTNESS);
+        }
+        if (server.hasArg("boost_min")) TURBO_MIN_BAR = server.arg("boost_min").toFloat();
+        if (server.hasArg("boost_max")) TURBO_MAX_BAR = server.arg("boost_max").toFloat();
+        
+        if (server.hasArg("boost_gauge_type")) BOOST_SCREEN = server.arg("boost_gauge_type").toInt();
+        if (server.hasArg("iat_gauge_type")) IAT_SCREEN = server.arg("iat_gauge_type").toInt();
+        if (server.hasArg("engload_gauge_type")) ENGLOAD_SCREEN = server.arg("engload_gauge_type").toInt();
+        if (server.hasArg("coolant_gauge_type")) COOLANT_SCREEN = server.arg("coolant_gauge_type").toInt();
+        if (server.hasArg("max_speed")) TARGET_SPEED = server.arg("max_speed").toInt();
+
+        // En HTML, une checkbox n'est envoyée dans la requête QUE si elle est cochée
+        CHECK_UPDATE_ON_BOOT = server.hasArg("check_update_boot");
+
+        saveValues(); // On grave tout dans la mémoire
+        
+        // On rafraîchit la page
+        server.sendHeader("Location", "/", true);
+        server.send(302, "text/plain", ""); });
+
+    // --- BOUTON RESTART DU WEB ---
+    server.on("/reset", HTTP_GET, []()
+              {
+        server.send(200, "text/html", "<html><body style='background:#0f172a; color:#fff; text-align:center; padding-top:50px; font-family:sans-serif;'><h2>Rebooting...</h2></body><script>setTimeout(()=>window.location='/', 4000);</script></html>");
+        delay(1000);
+        ESP.restart(); });
 
     ElegantOTA.begin(&server);
 

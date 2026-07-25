@@ -82,6 +82,54 @@
             border-bottom: none;
         }
 
+        /* --- STYLE DU TOGGLE SWITCH --- */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--border);
+            transition: .3s;
+            border-radius: 26px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: var(--accent);
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(24px);
+        }
+
+        /* ------------------------------- */
+
         input[type="number"],
         select {
             background-color: var(--bg-color);
@@ -181,6 +229,13 @@
 
                 <div class="card card-global">
                     <h3>⚙️ Paramètres Globaux</h3>
+                    <div class="form-row">
+                        <label>Recherche MàJ au boot</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" name="check_update_boot" %CHECK_UPDATE_BOOT%>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                     <div class="form-row">
                         <label>Gauge Ticks</label>
                         <input type="number" min="0" max="6" step="1" name="ticks" value="%TICKS%">
