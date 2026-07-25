@@ -29,8 +29,8 @@
 // =================================================================
 // CONFIGURATION DE L'UI DE DÉMARRAGE ET DE CONNEXION (AJUSTEMENTS)
 // =================================================================
-const int LOGO_OFFSET_Y = -11;
-const int UI_BASE_Y = 40;
+const int LOGO_OFFSET_Y = -1;
+const int UI_BASE_Y = 35;
 const int UI_TEXT_Y = UI_BASE_Y + 10;
 const int UI_BAR_Y = UI_BASE_Y + 14;
 
