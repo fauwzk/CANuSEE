@@ -32,7 +32,7 @@
 const int LOGO_OFFSET_Y = -11;
 const int UI_BASE_Y = 40;
 const int UI_TEXT_Y = UI_BASE_Y + 10;
-const int UI_BAR_Y = UI_BASE_Y + 14;
+const int UI_BAR_Y = UI_BASE_Y + 15;
 
 // =================================================================
 // CONFIGURATION DE L'AUTO-UPDATER GITHUB (HOTSPOT TELEPHONE)
@@ -87,7 +87,8 @@ AppState currentState = STATE_CONNECTING;
 bool ota_updating = false;
 float ota_progress = 0.0;
 
-String version_string = "CANuSEE " FW_VERSION;
+// String version_string = "CANuSEE " FW_VERSION;
+String version_string = FW_VERSION;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 20);
 const int centerX = 64;
