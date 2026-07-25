@@ -1543,7 +1543,7 @@ void setup()
         delay(15);
     }
 
-    delay(500);
+    delay(750);
 
     if (!LittleFS.begin())
     {
