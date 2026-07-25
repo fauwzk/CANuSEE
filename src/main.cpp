@@ -1365,10 +1365,15 @@ void draw_GaugeScreen(uint8_t index)
 
 void startCaptivePortal()
 {
-    WiFi.disconnect(true, true);
-    delay(100);
-    WiFi.mode(WIFI_AP);
+    // 1. Nettoyage doux du module Wi-Fi
+    WiFi.disconnect();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
 
+    // 2. Mode Point d'Accès avec sécurité Anti-Brownout
+    WiFi.mode(WIFI_AP);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm); // Crucial pour éviter le crash électrique
     WiFi.setSleep(false);
     delay(100);
 
@@ -1376,9 +1381,11 @@ void startCaptivePortal()
     IPAddress netMsk(255, 255, 255, 0);
     WiFi.softAPConfig(apIP, apIP, netMsk);
 
-    WiFi.softAP(ssid, "12345678", 6, 0, 4);
+    // Canal 1 (souvent moins saturé et plus stable pour l'AP de l'ESP)
+    WiFi.softAP(ssid, "12345678", 1, 0, 4);
     delay(500);
 
+    dnsServer.setErrorReplyCode(DNSReplyCode::NoError); // Important pour iOS
     dnsServer.start(DNS_PORT, "*", apIP);
 }
 
@@ -1388,6 +1395,14 @@ void startServer()
 
     server.on("/", HTTP_GET, []()
               { server.send(200, "text/html", generateWebPage()); });
+
+    // --- LE SECRET POUR IOS ET ANDROID ---
+    // Si le téléphone cherche à joindre internet en arrière plan,
+    // on le capture et on le force à afficher notre page Web.
+    server.onNotFound([]()
+                      {
+        server.sendHeader("Location", "http://192.168.4.1/", true);
+        server.send(302, "text/plain", ""); });
 
     // --- RECEPTION DU FORMULAIRE ET SAUVEGARDE ---
     server.on("/save", HTTP_POST, []()
@@ -1475,45 +1490,56 @@ void setup()
 
     delay(150);
 
-    // Bandeau glissant
-    for (int y = 64; y >= UI_BASE_Y; y -= 2)
+    // =========================================================
+    // Bandeau glissant ET apparition des infos synchronisées
+    // La ligne blanche "remonte" (y passe de 64 à UI_BASE_Y)
+    // =========================================================
+    for (int y = 64; y >= UI_BASE_Y; y -= 1) // On avance pixel par pixel (Ultra fluide)
     {
         u8g2.clearBuffer();
 
+        // 1. Dessin du fond (Logo Peugeot)
         u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
 
+        // 2. Création de la zone noire sous la ligne qui remonte
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, y, 128, 64 - y);
+
+        // 3. Ligne blanche de séparation qui remonte
         u8g2.setDrawColor(1);
         u8g2.drawLine(0, y, 128, y);
 
-        u8g2.sendBuffer();
-        delay(10);
-    }
+        // =========================================================
+        // ASTUCE VISUELLE : Masquage (Clip Window)
+        // On autorise le dessin des textes et de la barre UNIQUEMENT
+        // dans la zone noire que la ligne vient de révéler en montant.
+        // =========================================================
+        u8g2.setClipWindow(0, y + 1, 128, 64);
 
-    // Apparition du texte de version
-    for (int i = 0; i <= 100; i += 6)
-    {
-        u8g2.clearBuffer();
-        u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
+        // Calcul du pourcentage de progression (0 à 100%) basé sur la hauteur de la ligne
+        int progress = ((64 - y) * 100) / (64 - UI_BASE_Y);
 
-        u8g2.setDrawColor(0);
-        u8g2.drawBox(0, UI_BASE_Y, 128, 64 - UI_BASE_Y);
-        u8g2.setDrawColor(1);
-        u8g2.drawLine(0, UI_BASE_Y, 128, UI_BASE_Y);
-
+        // Textes
         u8g2.setFont(u8g2_font_helvB08_tr);
         drawStringLeft(4, UI_TEXT_Y, "CANuSEE");
 
         u8g2.setFont(u8g2_font_5x7_tr);
         drawStringRight(124, UI_TEXT_Y, version_string);
 
+        // Dessin de la barre (Contour)
         u8g2.drawFrame(4, UI_BAR_Y, 120, 6);
-        int barWidth = (i * 116) / 100;
+
+        // Dessin du remplissage horizontal synchronisé
+        int barWidth = (progress * 116) / 100;
         if (barWidth > 0)
             u8g2.drawBox(6, UI_BAR_Y + 2, barWidth, 2);
 
+        // Retrait du masque pour le prochain tour de boucle
+        u8g2.setMaxClipWindow();
+
         u8g2.sendBuffer();
+
+        // Délai de 15ms par pixel = animation totale d'environ 400ms (très fluide)
         delay(15);
     }
 
