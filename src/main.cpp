@@ -43,6 +43,15 @@ struct Settings
 #define EEPROM_SIZE sizeof(Settings)
 Settings cfg;
 
+// =================================================================
+// CONFIGURATION DE L'UI DE DÉMARRAGE ET DE CONNEXION (AJUSTEMENTS)
+// =================================================================
+const int LOGO_OFFSET_Y = -11;        // Décalage vertical du logo (-11 le descend un peu)
+const int UI_BASE_Y = 40;             // Hauteur de la ligne de séparation (40 la remonte)
+const int UI_TEXT_Y = UI_BASE_Y + 10; // Hauteur des textes (CANuSEE / Status)
+const int UI_BAR_Y = UI_BASE_Y + 14;  // Hauteur de la barre de progression
+// =================================================================
+
 int BOOST_SCREEN = 0, ENGLOAD_SCREEN = 0, COOLANT_SCREEN = 0, IAT_SCREEN = 0;
 int TICK_LINE_GAUGE = 2, TARGET_SPEED = 100, OLED_BRIGHTNESS = 255;
 
@@ -771,39 +780,37 @@ void drawEditScreen(String title, String valueStr, float progress)
 
 void drawConnectingScreen()
 {
-    int logoY = -14;
-    u8g2.setClipWindow(0, 0, 128, 42);
-    u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+    u8g2.setClipWindow(0, 0, 128, UI_BASE_Y);
+    u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
     u8g2.setMaxClipWindow();
 
-    // Boîte noire au fond avec séparation nette
     u8g2.setDrawColor(0);
-    u8g2.drawBox(0, 42, 128, 22);
+    u8g2.drawBox(0, UI_BASE_Y, 128, 64 - UI_BASE_Y);
     u8g2.setDrawColor(1);
-    u8g2.drawLine(0, 42, 128, 42);
+    u8g2.drawLine(0, UI_BASE_Y, 128, UI_BASE_Y);
 
     u8g2.setFont(u8g2_font_helvR08_tr);
-    drawStringCenter(52, bleStatusStr);
+    drawStringCenter(UI_TEXT_Y, bleStatusStr);
 
-    u8g2.drawFrame(4, 56, 120, 6);
+    u8g2.drawFrame(4, UI_BAR_Y, 120, 6);
 
     if (connected)
     {
         int fill = (elmInitStep / 5.0) * 116;
         if (fill > 0)
-            u8g2.drawBox(6, 58, fill, 2);
+            u8g2.drawBox(6, UI_BAR_Y + 2, fill, 2);
     }
     else
     {
-        // K2000 scanner inside the bar
         int width = 20;
         int max_x = 116 - width;
         int pos = (millis() / 15) % (max_x * 2);
         int xOffset = (pos < max_x) ? pos : (max_x * 2) - pos;
-        u8g2.drawBox(6 + xOffset, 58, width, 2);
+        u8g2.drawBox(6 + xOffset, UI_BAR_Y + 2, width, 2);
     }
 }
 
+// Nouvel écran "MODE CONFIG" ultra pro
 void drawConfigScreen()
 {
     // Header inversé en haut
@@ -833,6 +840,7 @@ void drawConfigScreen()
     drawStringCenter(60, "http://192.168.4.1");
 }
 
+// Nouvel écran de statut pendant la Mise à Jour (OTA)
 void drawOTAScreen()
 {
     u8g2.setFont(u8g2_font_helvB12_tr);
@@ -1135,17 +1143,16 @@ void setup()
     loadValues();
     setOledBrightness(OLED_BRIGHTNESS);
 
-    int logoY = -14;
-
-    for (int h = 0; h <= 42; h += 2)
+    // Phase 1 : Scanner Laser vertical rapide (Uniquement dans la zone du logo)
+    for (int h = 0; h <= UI_BASE_Y; h += 2)
     {
         u8g2.clearBuffer();
 
         u8g2.setClipWindow(0, 0, 128, h);
-        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+        u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
         u8g2.setMaxClipWindow();
 
-        if (h < 42)
+        if (h < UI_BASE_Y)
         {
             u8g2.setDrawColor(1);
             u8g2.drawLine(0, h, 128, h);
@@ -1157,11 +1164,12 @@ void setup()
 
     delay(150);
 
-    for (int y = 64; y >= 42; y -= 2)
+    // Phase 2 : Le bandeau glisse
+    for (int y = 64; y >= UI_BASE_Y; y -= 2)
     {
         u8g2.clearBuffer();
 
-        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+        u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
 
         u8g2.setDrawColor(0);
         u8g2.drawBox(0, y, 128, 64 - y);
@@ -1172,26 +1180,27 @@ void setup()
         delay(10);
     }
 
+    // Phase 3 : Remplissage de la barre
     for (int i = 0; i <= 100; i += 6)
     {
         u8g2.clearBuffer();
-        u8g2.drawXBM(0, logoY, 128, 64, epd_bitmap_logo_3008);
+        u8g2.drawXBM(0, LOGO_OFFSET_Y, 128, 64, epd_bitmap_logo_3008);
 
         u8g2.setDrawColor(0);
-        u8g2.drawBox(0, 42, 128, 22);
+        u8g2.drawBox(0, UI_BASE_Y, 128, 64 - UI_BASE_Y);
         u8g2.setDrawColor(1);
-        u8g2.drawLine(0, 42, 128, 42);
+        u8g2.drawLine(0, UI_BASE_Y, 128, UI_BASE_Y);
 
         u8g2.setFont(u8g2_font_helvB08_tr);
-        drawStringLeft(4, 52, "CANuSEE");
+        drawStringLeft(4, UI_TEXT_Y, "CANuSEE");
 
         u8g2.setFont(u8g2_font_5x7_tr);
-        drawStringRight(124, 52, version_string);
+        drawStringRight(124, UI_TEXT_Y, version_string);
 
-        u8g2.drawFrame(4, 56, 120, 6);
+        u8g2.drawFrame(4, UI_BAR_Y, 120, 6);
         int barWidth = (i * 116) / 100;
         if (barWidth > 0)
-            u8g2.drawBox(6, 58, barWidth, 2);
+            u8g2.drawBox(6, UI_BAR_Y + 2, barWidth, 2);
 
         u8g2.sendBuffer();
         delay(15);
