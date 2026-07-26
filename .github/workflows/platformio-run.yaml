@@ -9,10 +9,9 @@ permissions:
 
 jobs:
   build:
-    #runs-on: ubuntu-latest
+    # To go back to GitHub-hosted, uncomment the line below and comment out 'self-hosted'
+    # runs-on: ubuntu-latest
     runs-on: self-hosted
-    container:
-      image: ubuntu:24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -23,13 +22,19 @@ jobs:
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
 
-      - uses: actions/setup-python@v5
-        with:
-          #python-version: '3.11'
-          python-version: '3.14.6'
+      # Commented out for self-hosted to use the server's native Python
+      # - uses: actions/setup-python@v5
+      #   with:
+      #     python-version: '3.11'
 
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
+      # Modified to use native Python, a virtual environment, and inject it into the runner's PATH
+      - name: Install PlatformIO (Self-Hosted Venv)
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          python3 -m pip install --upgrade pip
+          pip install --upgrade platformio
+          echo "$GITHUB_WORKSPACE/venv/bin" >> $GITHUB_PATH
 
       - name: Get short SHA and expose to PlatformIO
         id: sha
