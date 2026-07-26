@@ -7,17 +7,17 @@
     <title>WIP Com 3D - Setup</title>
     <style>
         /* =========================================
-           THÈME NG4 HAUT CONTRASTE (Épuré)
+           THÈME NG4 RÉTROFIT - SÉLECTION DE SOURCE
            ========================================= */
         :root {
             --ng4-bg: #000000;
             --ng4-panel: #0a0a0a;
             --amber-main: #ff6600;
-            /* Ambre très vif */
             --amber-dark: #cc4800;
-            --amber-glow: rgba(255, 102, 0, 0.6);
+            --amber-glow: rgba(255, 102, 0, 0.4);
             --text-main: #ffffff;
-            /* Blanc pur pour contraste max */
+            --text-muted: #555555;
+            --border-light: #222222;
         }
 
         * {
@@ -30,17 +30,16 @@
             font-family: Tahoma, Arial, sans-serif;
             background-color: #000;
             color: var(--text-main);
-            padding: 15px;
+            padding: 10px;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
         }
 
-        /* L'écran principal net et tranché */
         .screen-bezel {
             width: 100%;
-            max-width: 900px;
+            max-width: 800px;
             background: var(--ng4-bg);
             border: 2px solid #333;
             border-radius: 6px;
@@ -48,13 +47,15 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            /* Hauteur fixe pour imiter un écran physique */
+            height: 90vh;
+            max-height: 850px;
         }
 
-        /* Barre d'état supérieure */
+        /* En-tête globale */
         .header-bar {
-            background: linear-gradient(180deg, #222 0%, #050505 100%);
-            padding: 15px 20px;
-            border-bottom: 2px solid var(--amber-main);
+            background: linear-gradient(180deg, #1a1a1a 0%, #000000 100%);
+            padding: 12px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -63,7 +64,7 @@
         .header-bar h2 {
             margin: 0;
             font-weight: bold;
-            font-size: 18px;
+            font-size: 16px;
             letter-spacing: 2px;
             color: #fff;
             text-transform: uppercase;
@@ -76,25 +77,94 @@
             font-weight: bold;
         }
 
-        .menu-container {
-            padding: 20px;
+        /* --- BARRE DE SELECTION DES SOURCES (ONGLETS) --- */
+        .source-selector {
             display: flex;
-            flex-direction: column;
-            gap: 20px;
+            background: #050505;
+            border-top: 1px solid var(--border-light);
+            border-bottom: 2px solid #111;
         }
 
-        /* Groupes de menus très contrastés */
+        .source-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-right: 1px solid var(--border-light);
+            padding: 15px 5px;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .source-btn:last-child {
+            border-right: none;
+        }
+
+        /* État Actif de la Source */
+        .source-btn.active {
+            color: #fff;
+            background: linear-gradient(180deg, rgba(255, 102, 0, 0.05) 0%, rgba(255, 102, 0, 0.15) 100%);
+            box-shadow: inset 0 -3px 0 var(--amber-main);
+            text-shadow: 0 0 8px var(--amber-glow);
+        }
+
+        .source-btn:hover:not(.active) {
+            color: #aaa;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        /* --- CONTENEUR DES PAGES (SOURCES) --- */
+        #config-form {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .source-content {
+            display: none;
+            /* Masqué par défaut */
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .source-content.active {
+            display: block;
+            /* Affiché quand actif */
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Styles internes des menus */
         .menu-group {
             background-color: var(--ng4-panel);
-            border: 1px solid #2a2a2a;
+            border: 1px solid #1a1a1a;
             border-radius: 4px;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
         }
 
         .menu-group h3 {
             margin: 0;
             padding: 12px 15px;
-            background: linear-gradient(180deg, #2a2a2a 0%, #0d0d0d 100%);
+            background: linear-gradient(180deg, #1a1a1a 0%, #050505 100%);
             border-bottom: 1px solid #000;
             color: var(--amber-main);
             font-size: 13px;
@@ -103,24 +173,23 @@
             font-weight: bold;
         }
 
-        /* Lignes de formulaire */
         .form-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 14px 15px;
-            border-bottom: 1px solid #1a1a1a;
-            font-size: 14px;
+            border-bottom: 1px solid #111;
+            font-size: 13px;
             font-weight: bold;
             text-transform: uppercase;
-            color: #fff;
+            color: #ccc;
         }
 
         .form-row:last-child {
             border-bottom: none;
         }
 
-        /* --- TOGGLE SWITCH (Haut Contraste) --- */
+        /* --- CONTROLES (Inputs) --- */
         .toggle-switch {
             position: relative;
             display: inline-block;
@@ -169,7 +238,6 @@
             background: linear-gradient(180deg, #fff 0%, #bbb 100%);
         }
 
-        /* --- ZONES DE TEXTE & MENUS DÉROULANTS --- */
         input[type="number"],
         select {
             background-color: #000;
@@ -179,12 +247,12 @@
             font-size: 16px;
             border-radius: 2px;
             padding: 8px 10px;
-            width: 140px;
+            width: 130px;
             text-align: right;
             border-top: 2px solid #000;
             border-left: 2px solid #000;
-            border-bottom: 1px solid #444;
-            border-right: 1px solid #444;
+            border-bottom: 1px solid #333;
+            border-right: 1px solid #333;
             box-shadow: inset 0 2px 5px rgba(0, 0, 0, 1);
             cursor: pointer;
         }
@@ -197,7 +265,6 @@
             box-shadow: inset 0 2px 5px rgba(0, 0, 0, 1), 0 0 8px var(--amber-glow);
         }
 
-        /* Range Slider Brut */
         input[type=range] {
             -webkit-appearance: none;
             width: 100%;
@@ -225,7 +292,22 @@
             box-shadow: inset 0 2px 4px rgba(0, 0, 0, 1);
         }
 
-        /* --- BOUTONS (Effet Vitre / Reflet maintenu) --- */
+        /* --- BARRE DU BAS (Boutons physiques) --- */
+        .bottom-bar {
+            background: linear-gradient(180deg, #1a1a1a 0%, #050505 100%);
+            padding: 15px;
+            border-top: 1px solid #222;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: row;
+            gap: 12px;
+        }
+
         button,
         .btn {
             position: relative;
@@ -233,8 +315,8 @@
             align-items: center;
             justify-content: center;
             width: 100%;
-            height: 48px;
-            font-size: 13px;
+            height: 44px;
+            font-size: 12px;
             font-weight: bold;
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -272,43 +354,19 @@
             background: linear-gradient(180deg, #ff7a1a 0%, var(--amber-main) 49%, #b34700 50%, #4d1c00 100%);
             color: #fff;
             text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.8);
-            margin: 0;
         }
 
         .btn-success {
             background: linear-gradient(180deg, #2eb82e 0%, #248f24 49%, #196619 50%, #0f3d0f 100%);
+            flex: 1;
         }
 
         .btn-danger {
             background: linear-gradient(180deg, #e62e2e 0%, #b30000 49%, #800000 50%, #4d0000 100%);
-        }
-
-        .bottom-bar {
-            background: linear-gradient(180deg, #1a1a1a 0%, #050505 100%);
-            padding: 20px;
-            border-top: 1px solid #333;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .action-buttons {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
+            flex: 1;
         }
 
         @media (min-width: 768px) {
-            .menu-container {
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                align-items: start;
-            }
-
-            .menu-group-full {
-                grid-column: span 2;
-            }
-
             .bottom-bar {
                 flex-direction: row;
                 padding: 20px;
@@ -321,12 +379,12 @@
 
             .action-buttons {
                 flex: 2;
-                flex-direction: row;
                 gap: 15px;
             }
 
-            .action-buttons .btn {
-                flex: 1;
+            .source-btn {
+                font-size: 14px;
+                padding: 20px 5px;
             }
         }
     </style>
@@ -336,42 +394,54 @@
     <div class="screen-bezel">
 
         <div class="header-bar">
-            <h2>Réglages CANuSEE</h2>
+            <h2>Configuration</h2>
             <span class="version-badge">%VERSION%</span>
         </div>
 
-        <form action="/save" method="post" id="config-form" style="display: contents;">
-            <div class="menu-container">
+        <!-- BARRE DE SÉLECTION DE SOURCE -->
+        <div class="source-selector">
+            <button type="button" class="source-btn active" onclick="openSource('src-sys')">Système</button>
+            <button type="button" class="source-btn" onclick="openSource('src-turbo')">Turbo</button>
+            <button type="button" class="source-btn" onclick="openSource('src-moteur')">Moteur</button>
+            <button type="button" class="source-btn" onclick="openSource('src-chrono')">Chrono</button>
+        </div>
 
-                <div class="menu-group menu-group-full">
-                    <h3>Paramètres Système</h3>
+        <!-- LE FORMULAIRE ENGLOBE TOUTES LES SOURCES -->
+        <form action="/save" method="post" id="config-form">
+
+            <!-- SOURCE 1 : SYSTEME -->
+            <div id="src-sys" class="source-content active">
+                <div class="menu-group">
+                    <h3>Paramètres Généraux</h3>
                     <div class="form-row">
-                        <label>Recherche de MàJ au démarrage</label>
+                        <label>Recherche MàJ au boot</label>
                         <label class="toggle-switch">
                             <input type="checkbox" name="check_update_boot" %CHECK_UPDATE_BOOT%>
                             <span class="slider"></span>
                         </label>
                     </div>
-
                     <div class="form-row">
-                        <label>Épaisseur des graduations (Ticks)</label>
+                        <label>Graduations Jauges (Ticks)</label>
                         <input type="number" min="0" max="6" step="1" name="ticks" value="%TICKS%">
                     </div>
                     <div class="form-row">
-                        <label>Luminosité Dalle OLED</label>
-                        <div style="display: flex; align-items: center; gap: 15px; width: 180px;">
+                        <label>Luminosité OLED</label>
+                        <div style="display: flex; align-items: center; gap: 15px; width: 170px;">
                             <input type="range" min="0" max="100" step="1" name="brightness" value="%BRIGHTNESS_PCT%"
                                 oninput="document.getElementById('bright_val').innerText = this.value + '%'">
                             <span id="bright_val"
-                                style="width: 50px; text-align: right; font-family: 'Courier New', Courier, monospace; font-weight: bold; color: var(--amber-main); font-size: 16px;">
+                                style="width: 50px; text-align: right; font-family: 'Courier New', Courier, monospace; font-weight: bold; color: var(--amber-main); font-size: 15px;">
                                 %BRIGHTNESS_PCT%%
                             </span>
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <!-- SOURCE 2 : TURBO -->
+            <div id="src-turbo" class="source-content">
                 <div class="menu-group">
-                    <h3>Pression Turbo</h3>
+                    <h3>Configuration Turbo</h3>
                     <div class="form-row">
                         <label>Pression Min (bar)</label>
                         <input type="number" step="0.01" name="boost_min" value="%MIN%">
@@ -381,75 +451,97 @@
                         <input type="number" step="0.01" name="boost_max" value="%MAX%">
                     </div>
                     <div class="form-row">
-                        <label>Mode d'affichage</label>
+                        <label>Type de Jauge</label>
                         <select name="boost_gauge_type">
-                            <option value="0" %SELECTED_BOOST_TEXT%>TEXTE BRUT</option>
+                            <option value="0" %SELECTED_BOOST_TEXT%>TEXTE</option>
                             <option value="1" %SELECTED_BOOST_GAUGE%>GRAPHIQUE</option>
                             <option value="2" %SELECTED_BOOST_DIAL%>CADRAN</option>
                             <option value="3" %SELECTED_BOOST_BAR%>BARRE</option>
                         </select>
                     </div>
                 </div>
+            </div>
 
+            <!-- SOURCE 3 : MOTEUR (IAT / LDR / CHARGE) -->
+            <div id="src-moteur" class="source-content">
                 <div class="menu-group">
-                    <h3>Température Air (IAT)</h3>
+                    <h3>Télémétrie Moteur</h3>
                     <div class="form-row">
-                        <label>Mode d'affichage</label>
+                        <label>Temp. Air (IAT) - Jauge</label>
                         <select name="iat_gauge_type">
-                            <option value="0" %SELECTED_IAT_TEXT%>TEXTE BRUT</option>
+                            <option value="0" %SELECTED_IAT_TEXT%>TEXTE</option>
                             <option value="1" %SELECTED_IAT_GAUGE%>GRAPHIQUE</option>
                             <option value="2" %SELECTED_IAT_DIAL%>CADRAN</option>
                             <option value="3" %SELECTED_IAT_BAR%>BARRE</option>
                         </select>
                     </div>
-                </div>
-
-                <div class="menu-group">
-                    <h3>Charge Moteur</h3>
                     <div class="form-row">
-                        <label>Mode d'affichage</label>
+                        <label>Charge Moteur - Jauge</label>
                         <select name="engload_gauge_type">
-                            <option value="0" %SELECTED_LOAD_TEXT%>TEXTE BRUT</option>
+                            <option value="0" %SELECTED_LOAD_TEXT%>TEXTE</option>
                             <option value="1" %SELECTED_LOAD_GAUGE%>GRAPHIQUE</option>
                             <option value="2" %SELECTED_LOAD_DIAL%>CADRAN</option>
                             <option value="3" %SELECTED_LOAD_BAR%>BARRE</option>
                         </select>
                     </div>
-                </div>
-
-                <div class="menu-group">
-                    <h3>Température LdR</h3>
                     <div class="form-row">
-                        <label>Mode d'affichage</label>
+                        <label>Temp. LdR - Jauge</label>
                         <select name="coolant_gauge_type">
-                            <option value="0" %SELECTED_COOLANT_TEXT%>TEXTE BRUT</option>
+                            <option value="0" %SELECTED_COOLANT_TEXT%>TEXTE</option>
                             <option value="1" %SELECTED_COOLANT_GAUGE%>GRAPHIQUE</option>
                             <option value="2" %SELECTED_COOLANT_DIAL%>CADRAN</option>
                             <option value="3" %SELECTED_COOLANT_BAR%>BARRE</option>
                         </select>
                     </div>
                 </div>
+            </div>
 
-                <div class="menu-group menu-group-full">
-                    <h3>Télémétrie</h3>
+            <!-- SOURCE 4 : CHRONO -->
+            <div id="src-chrono" class="source-content">
+                <div class="menu-group">
+                    <h3>Chronomètre Embarqué</h3>
                     <div class="form-row">
                         <label>Vitesse Cible (km/h)</label>
                         <input type="number" min="0" max="300" step="10" name="max_speed" value="%MAX_SPEED%">
                     </div>
                 </div>
-
             </div>
+
         </form>
 
+        <!-- BARRE D'ACTIONS GLOBALES -->
         <div class="bottom-bar">
             <button type="submit" form="config-form" class="btn btn-primary">Valider les réglages</button>
             <div class="action-buttons">
-                <a href="/update" class="btn btn-success">Mise à jour</a>
-                <a href="/reset" class="btn btn-danger">Redémarrer</a>
+                <a href="/update_ota" class="btn btn-success">MaJ OTA</a>
+                <a href="/update" class="btn btn-success">MàJ HL</a>
+                <a href="/reset" class="btn btn-danger">Reboot</a>
             </div>
         </div>
 
     </div>
+
+    <!-- JAVASCRIPT GESTION DES ONGLETS -->
+    <script>
+        function openSource(sourceId) {
+            // 1. Cacher tous les contenus
+            var contents = document.getElementsByClassName("source-content");
+            for (var i = 0; i < contents.length; i++) {
+                contents[i].classList.remove("active");
+            }
+
+            // 2. Retirer l'état "actif" de tous les boutons
+            var btns = document.getElementsByClassName("source-btn");
+            for (var i = 0; i < btns.length; i++) {
+                btns[i].classList.remove("active");
+            }
+
+            // 3. Activer la source demandée
+            document.getElementById(sourceId).classList.add("active");
+            // Trouver le bouton qui a déclenché l'événement et l'activer
+            event.currentTarget.classList.add("active");
+        }
+    </script>
 </body>
 
 </html>

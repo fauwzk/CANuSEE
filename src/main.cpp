@@ -1395,6 +1395,8 @@ void startServer()
 
     server.on("/", HTTP_GET, []()
               { server.send(200, "text/html", generateWebPage()); });
+    server.on("/update_ota", HTTP_GET, []()
+              { server.send(200, "text/html", "en cours de dev"); });
 
     // --- LE SECRET POUR IOS ET ANDROID ---
     // Si le téléphone cherche à joindre internet en arrière plan,
