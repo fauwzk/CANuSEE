@@ -361,8 +361,8 @@ void parseOBDResponse(String response, uint8_t pid)
         case 0x0B:
             mapPressure = A;
             turboPressureState = (A - 100.0) * 0.01;
-            if (turboPressureState < 0)
-                turboPressureState = 0;
+            // if (turboPressureState < 0)
+            // turboPressureState = 0;
             dashBoost = turboPressureState;
             break;
         case 0x0C:
