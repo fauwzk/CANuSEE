@@ -642,7 +642,7 @@ String generateWebPage()
         return "<html><body><h3>File not found</h3></body></html>";
     String html = file.readString();
     file.close();
-
+    html.replace("%VERSION%", FW_VERSION);
     // Remplacement des variables pour afficher l'état actuel de l'ESP sur la page web
     html.replace("%TICKS%", String(TICK_LINE_GAUGE));
     html.replace("%BRIGHTNESS_PCT%", String(map(OLED_BRIGHTNESS, 0, 255, 0, 100)));
